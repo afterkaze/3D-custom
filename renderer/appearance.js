@@ -12,7 +12,9 @@ const Appearance=(()=>{
     return saves;
   }
   function apply(next={},save=true){
-    const old=mode,oldInfo=infoBar,oldSize=caseSize;if(['xlarge','large','small','compact','hidden'].includes(next.infoBar))infoBar=next.infoBar;if(Object.hasOwn(caseSizes,next.caseSize))caseSize=next.caseSize;document.documentElement.dataset.caseSize=caseSize;for(const b of document.querySelectorAll('button[data-case-size]'))b.setAttribute('aria-pressed',String(b.dataset.caseSize===caseSize));if(themes[next.theme])theme=next.theme;if(layouts[next.layout])mode=next.layout;
+    const old=mode,oldInfo=infoBar,oldSize=caseSize;if(['xlarge','large','small','compact','hidden'].includes(next.infoBar))infoBar=next.infoBar;if(Object.hasOwn(caseSizes,next.caseSize))caseSize=next.caseSize;
+    // Larger cases only fit with the details panel out of the way, so choosing one hides the details.
+    if(next.caseSize&&caseSize!=='default'&&!next.infoBar)infoBar='hidden';document.documentElement.dataset.caseSize=caseSize;for(const b of document.querySelectorAll('button[data-case-size]'))b.setAttribute('aria-pressed',String(b.dataset.caseSize===caseSize));if(themes[next.theme])theme=next.theme;if(layouts[next.layout])mode=next.layout;
     document.documentElement.dataset.infoBar=infoBar;
     $('#btnToggleDetails').setAttribute('aria-pressed',String(infoBar!=='hidden'));
     $('#btnToggleDetails').textContent=infoBar==='hidden'?'Show details (I)':'Hide details (I)';
