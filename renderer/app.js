@@ -30,25 +30,16 @@ const sysOf = id => S.config.systems.find(s => s.id === id) || { id, name: id, c
 const toast = (m, ms = 3200) => { const t = $('#toast'); t.textContent = m; t.classList.add('on'); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('on'), ms); };
 
 function physicalSystem(game) {
-  const sys=sysOf(game.system);
-  if(!game.mediaType){
-    if(sys.id!=='snes')return sys;
-    // Super Famicom boxes came in both orientations. Prefer the scan over the ROM's region.
-    const aspect=game._aspect;
-    if(aspect>1.6)return {...sys,packaging:'superfamicom-wide'};
-    if(aspect ? aspect<.95 : regionOf(game)==='Japan')return {...sys,packaging:'superfamicom-tall'};
-    return sys;
-  }
+  const sys=sysOf(game.system);if(!game.mediaType)return sys;
   if(game.mediaType==='disc')return {...sys,id:'physical-disc',media:'disc',caseType:'dvd'};
   const profiles={switch:'switch',switch2:'switch',gba:'cartbox',n64:'bigbox',nds:'ds'};
   return {...sys,id:game.mediaType,media:'cart',caseType:profiles[game.mediaType]||sys.caseType};
 }
 function art(game) {
   const sys = physicalSystem(game);
-  const standardSize = Packaging.size(sys);
-  let [W, H, D] = standardSize || CASES[sys.caseType] || CASES.dvd;
+  let [W, H, D] = Packaging.profiles[sys.id]?.size || CASES[sys.caseType] || CASES.dvd;
   // Recognised systems retain their physical case proportions regardless of scan margins.
-  if (game._aspect && !standardSize) {
+  if (game._aspect && !Packaging.profiles[sys.id]) {
     const area = W * H, a = Math.max(.55, Math.min(1.6, game._aspect));
     W = Math.round(Math.sqrt(area * a)); H = Math.round(W / a);
   }
@@ -59,9 +50,7 @@ function art(game) {
   return {
     sys, W, H, D, digital,packshot:game._packshot,
     front: m.front || Art.front(game, sys, W, H),
-    // A generated back cover may still be drawing: backLater() resolves with it (see backFace).
     back: m.back || Art.back(game, sys, W, H),
-    backLater: m.back ? null : now => Art.backLater(game, sys, W, H, now),
     spine: m.spine || null,
     // No disc/cart scan? Use the real cover as the label, else generate one.
     // A photo of the whole media (a PSP UMD) is shown on its own; the drawn shell then uses the cover as its label.
@@ -130,7 +119,12 @@ const DetailsResize = (() => {
     const shotHeight = width / shotAspect;
     const tight = String(shotHeight < 165);
     if (root.dataset.detailsShotTight !== tight) root.dataset.detailsShotTight = tight;
+    const padding = innerWidth <= 1250 ? 44 : 60;
+    const expansion = resized ? (height - min) / (max() - min) : mode === 'xlarge' ? 1 : mode === 'large' ? 0.55 : 0;
+    const center = innerWidth * (0.4 + 0.1 * expansion);
+    const leading=Math.max(0,center-padding-width/2-24);
     const dimensions = {
+      '--details-leading': Math.round(leading * 2) / 2,
       '--details-shot-width': width,
       '--details-shot-height': shotHeight,
       '--details-title-cap': Math.max(18, shotHeight * .24),
@@ -195,12 +189,11 @@ async function boot() {
   S.orders = await (api.gameOrders?.() || Promise.resolve({})).catch(()=>({}));
   LibraryUI.init({getState:()=>S,select:setSystem});
   AudioUI.init(S.config.uiSound);
-  Ambient.init({initial:S.config.ambient,canRun:()=>document.documentElement.dataset.leiaActive!=='true'&&!inGame()&&libraryActive()&&!caseShown()&&!LibraryUI.pickerOpen()&&!Appearance.panelOpen()&&!document.activeElement?.matches?.('input,select,textarea'),advance:()=>select(S.sel+1>=S.list.length?0:S.sel+1)});
+  Ambient.init({initial:S.config.ambient,canRun:()=>false&&!inGame()&&libraryActive()&&!caseShown()&&!LibraryUI.pickerOpen()&&!Appearance.panelOpen()&&!document.activeElement?.matches?.('input,select,textarea'),advance:()=>select(S.sel+1>=S.list.length?0:S.sel+1)});
   Appearance.init({getState:()=>S,toast,refresh:()=>{resizeShelf();for(const it of items.values()){const game=S.games.find(g=>g.id===it.dataset.id);if(game)fillItem(it,game)}if(S.list.length)layout();promptFamilyRendered='';renderPrompts()}});
   eShopStyle=S.config.eShopStyle==='original'?'original':'enhanced';
   promptPreference = validPromptPreference(S.config.promptFamily);
   applyMotion(S.config.motion || 'auto');
-  applyPerformance();
   foldBrand();
   renderPrompts();
   api.onToast(toast);
@@ -217,48 +210,21 @@ async function boot() {
   api.onGameEnded?.(gameEnded);
   ArtworkUI.init({getGames:()=>S.games,getSystems:()=>S.config.systems,getSelected:()=>S.list[S.sel],updateGame:updateArtwork});
   api.onArtMedia?.(updateArtwork); // background re-encoding of oversized images
-  api.onLibraryInfo?.(list => {
-    const updates = new Map(list.map(({gameId, info}) => [gameId, info]));
-    for (const game of S.games) {
-      if (updates.has(game.id)) game.info = updates.get(game.id);
-    }
-    consoleNavigation = null;
-    showInfo();
-  });
-  await startLibrary();
+  api.onLibraryInfo?.(list => { for (const {gameId, info} of list) { const g = S.games.find(x => x.id === gameId); if (g) g.info = info; } showInfo(); });
+  await loadLibrary();
   LibraryChrome.init();
   DetailsResize.init();
   LeiaUI.init(S.config);
   initAppUpdates();
   let shelfResizeFrame=0;const scheduleShelfResize=()=>{if(shelfResizeFrame)return;shelfResizeFrame=requestAnimationFrame(()=>{shelfResizeFrame=0;resizeShelf();if(S.config&&libraryActive())layout();});};
-  const shelfObserver = new ResizeObserver(scheduleShelfResize);
-  shelfObserver.observe($('#info'));
-  shelfObserver.observe($('#stage'));
-  shelfObserver.observe($('#libraryHints'));
+  const shelfObserver=new ResizeObserver(scheduleShelfResize);shelfObserver.observe($('#info'));shelfObserver.observe($('#stage'));
   renderEmus();
   renderSettings();
   setInterval(() => ($('#clock').textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })), 1000);
   requestAnimationFrame(pollPad);
 }
 
-// Start-up: show the last scan's games at once, then rescan behind them and only redraw if the
-// folders changed. Without a cache (first start, folders or app version changed) it scans as before.
-let libraryLoads = 0;
-async function startLibrary() {
-  const cached = await (api.cachedLibrary?.() || Promise.resolve(null)).catch(() => null);
-  if (!cached?.length) return loadLibrary();
-  applyLibrary(cached);
-  const load = ++libraryLoads;
-  api.scan(false, { onlyIfChanged: true }).then(games => {
-    if (!games || load !== libraryLoads) return; // unchanged, or a newer scan has already been shown
-    S.pendingGame = S.list[S.sel]?.id || null;
-    S.list = []; // the selection is restored by id, not by the old game object
-    applyLibrary(games);
-  }).catch(error => toast('Scan failed: ' + error.message));
-}
-
 async function loadLibrary(withReport = false) {
-  ++libraryLoads;
   $('#loading').classList.remove('hidden');
   let result;
   try {
@@ -270,11 +236,7 @@ async function loadLibrary(withReport = false) {
   } finally {
     $('#loading').classList.add('hidden');
   }
-  applyLibrary(withReport ? result.games : result);
-  return result;
-}
-
-function applyLibrary(games) {
+  let games = withReport ? result.games : result;
   S.demo = games.length === 0;
   if (S.demo) games = DEMO.map(([system, title, year, developer, genre, players, description]) => ({
     id: `${system}:demo-${title}`, system, title, romPath: null, demo: true, media: {},
@@ -286,6 +248,7 @@ function applyLibrary(games) {
   renderChips();
   renderShelfTools();
   setSystem(S.system);
+  return result;
 }
 
 let lastDetailsSize = 'small', editingGameId = null;
@@ -310,8 +273,81 @@ function editGameDetails(game = S.list[S.sel]) {
   $('#editGameMediaType').value = game.mediaType || '';
   $('#gameDetailsError').textContent = '';
   $('#gameDetailsSave').disabled = false;
+  $('#gameSources').open = game.system === 'recomp' || $('#gameSources').open;
+  loadGameSources(game);
   $('#gameDetailsEditor').showModal();
   $('#editGameTitle').focus();
+}
+// Opens the editor straight at its Sources section (right-click a case or the screenshot → Sources…).
+function editGameSources(game) {
+  editGameDetails(game);
+  if (!$('#gameDetailsEditor').open) return;
+  $('#gameSources').open = true;
+  requestAnimationFrame(() => { $('#gameSources').scrollIntoView({ block: 'start' }); $('#editDetailsSource').focus({ preventScroll: true }); });
+}
+// ---------- Sources: the exact LaunchBox page and picture links behind a game ----------
+const SOURCE_LABELS = {front:'Cover',back:'Back cover',disc:'Disc / cartridge',screenshot:'Screenshot',logo:'Logo',fanart:'Background'};
+let sourceSnapshot = null;
+const shortPath = file => file.length > 64 ? '…' + file.slice(-62) : file;
+function renderGameSources(data) {
+  sourceSnapshot = data;
+  const lb = data.launchbox;
+  $('#editDetailsSource').value = lb?.page || '';
+  $('#editDetailsSource').dataset.initial = lb?.page || '';
+  $('#detailsSourceNote').textContent = !data.ready ? 'Download artwork once (Artwork tab) to get the LaunchBox database for automatic matching.'
+    : lb ? (lb.pinned ? 'Pinned by you' : 'Matched automatically by title') + (lb.platform ? ` · ${lb.platform}` : '') + (lb.missing ? ' · not in the current database' : '')
+    : 'No LaunchBox match yet. Paste the game\'s LaunchBox page to use its details and artwork.';
+  const box = $('#artSources'); box.replaceChildren();
+  for (const [kind, s] of Object.entries(data.art)) {
+    const row = el('div', 'source-field game-art-source');
+    const label = el('label'); label.htmlFor = 'artSource-' + kind; label.textContent = SOURCE_LABELS[kind] || kind;
+    const line = el('div', 'source-row');
+    const input = el('input'); input.id = 'artSource-' + kind; input.type = 'text'; input.inputMode = 'url'; input.autocomplete = 'off'; input.spellcheck = false;
+    input.dataset.kind = kind; input.value = s.url; input.dataset.initial = s.url;
+    input.placeholder = s.file ? 'Paste an image link to replace it' : 'Paste an image link (https://…)';
+    const open = el('button', 'source-open', '↗'); open.type = 'button'; open.title = 'Open the current source'; open.dataset.sourceInput = input.id;
+    line.append(input, open); row.append(label, line);
+    const note = el('p', 'source-note');
+    const how = {download:'Downloaded from this link', link:'Your link', import:'Imported from'}[s.how];
+    if (s.how === 'import' && s.from) note.textContent = `${how} ${shortPath(s.from)}`;
+    else if (s.url) note.textContent = how || 'From this link';
+    else if (s.file) note.textContent = `Local file: ${shortPath(s.file)}`;
+    else note.textContent = 'None yet';
+    if (s.file || s.from) { const show = el('button', 'source-link', 'Show file'); show.type = 'button'; show.onclick = () => api.openSource(s.file || s.from).catch(e => toast(e.message)); note.append(' ', show); }
+    if (s.suggested && s.suggested !== s.url) { const use = el('button', 'source-link', 'Use LaunchBox picture'); use.type = 'button'; use.title = s.suggested; use.onclick = () => { input.value = s.suggested; input.focus(); }; note.append(' ', use); }
+    row.append(note); box.append(row);
+  }
+}
+async function loadGameSources(game) {
+  sourceSnapshot = null; $('#artSources').replaceChildren(); $('#detailsSourceNote').textContent = 'Looking up sources…';
+  $('#editDetailsSource').value = ''; $('#editDetailsSource').dataset.initial = '';
+  try { const data = await api.gameSources(game.id); if (editingGameId === game.id) renderGameSources(data); }
+  catch (e) { $('#detailsSourceNote').textContent = e.message; }
+}
+$('#gameSources').addEventListener('click', event => {
+  const button = event.target.closest('[data-source-input]'); if (!button) return;
+  const input = document.getElementById(button.dataset.sourceInput);
+  const kind = input?.dataset.kind, current = sourceSnapshot?.art?.[kind];
+  const target = input?.value.trim() || (kind ? current?.file || current?.from : '');
+  if (!target) return toast('Nothing to open yet.');
+  api.openSource(target).catch(e => toast(e.message));
+});
+// Applies changed source links; returns true when something changed.
+async function saveGameSources(game) {
+  if (!sourceSnapshot) return false;
+  let changed = false;
+  const details = $('#editDetailsSource');
+  if (details.value.trim() !== (details.dataset.initial || '')) {
+    const result = await api.setDetailsSource({ gameId: game.id, url: details.value.trim() });
+    game.info = result.info; changed = true;
+  }
+  for (const input of $('#artSources').querySelectorAll('input[data-kind]')) {
+    const url = input.value.trim();
+    if (!url || url === (input.dataset.initial || '')) continue;
+    const result = await api.setArtSource({ gameId: game.id, kind: input.dataset.kind, url });
+    updateArtwork(result); changed = true;
+  }
+  return changed;
 }
 $('#btnEditDetails').onclick = () => editGameDetails();
 $('#gameDetailsCancel').onclick = () => $('#gameDetailsEditor').close();
@@ -322,6 +358,7 @@ $('#gameDetailsForm').onsubmit = async event => {
   $('#gameDetailsSave').disabled = true;
   try {
     Object.assign(game, await api.setMetadata({ gameId: game.id, title: $('#editGameTitle').value, version: $('#editGameVersion').value, mediaType:$('#editGameMediaType').value }));
+    await saveGameSources(game);
     $('#gameDetailsEditor').close();
     // Regenerate fallback artwork and shelf labels using the new title.
     setSystem(S.system); renderHiddenGames();
@@ -333,7 +370,6 @@ $('#gameDetailsEditor').addEventListener('close', () => { editingGameId = null; 
 
 // ---------- system chips ----------
 function renderChips() {
-  consoleNavigation = null;
   LibraryUI.render();
 }
 const lastGame = new Map(); // system id -> id of the game last selected there
@@ -342,16 +378,12 @@ const VIEWS = { favorites: 'Favourites', recent: 'Recently played' };
 const viewName = id => id === 'all' ? 'All games' : VIEWS[id] || sysOf(id).name;
 // A hidden system (Settings → Show) leaves every shelf, including All games, Favourites and Recently played.
 const systemHidden = id => !!S.config?.systems.find(s => s.id === id)?.hidden;
-// A hidden game leaves every shelf too, until "Show → Hidden games" asks for exactly those.
-const showingHidden = () => S.filter === 'hidden';
-const inView = (g, id) => !systemHidden(g.system) && !!g.hidden === showingHidden()
-  && (id === 'all' || (id === 'favorites' ? !!g.favorite : id === 'recent' ? g.lastPlayed > 0 : g.system === id));
+const inView = (g, id) => !g.hidden && !systemHidden(g.system) && (id === 'all' || (id === 'favorites' ? !!g.favorite : id === 'recent' ? g.lastPlayed > 0 : g.system === id));
 // Sorting and filtering, applied inside the current system or view.
 const yearOf = g => parseInt(g.info?.year, 10) || 0;
 const genresOf = g => String(g.info?.genre || '').split(/[;,/]|\s+&\s+/).map(x => x.trim()).filter(Boolean);
 const maxPlayers = g => Math.max(0, ...(String(g.info?.players || '').match(/\d+/g) || []).map(Number));
-const compareNames = new Intl.Collator(undefined, { sensitivity: 'base' }).compare;
-const byTitle = (a, b) => compareNames(a.title, b.title);
+const byTitle = (a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' });
 const SORTS = {
   title: null,
   custom: null,
@@ -359,11 +391,10 @@ const SORTS = {
   'year-old': (a, b) => (yearOf(a) || 9999) - (yearOf(b) || 9999),
   played: (a, b) => (b.playMs || 0) - (a.playMs || 0),
   recent: (a, b) => (b.lastPlayed || 0) - (a.lastPlayed || 0),
-  developer: (a, b) => !a.info?.developer - !b.info?.developer || compareNames(String(a.info?.developer || ''), String(b.info?.developer || '')),
+  developer: (a, b) => !a.info?.developer - !b.info?.developer || String(a.info?.developer || '').localeCompare(String(b.info?.developer || ''), undefined, { sensitivity: 'base' }),
 };
 function passesFilter(g) {
   if (!S.filter) return true;
-  if (S.filter === 'hidden') return true; // inView already narrowed the shelf to hidden games
   if (S.filter === 'multi') return maxPlayers(g) >= 2;
   if (S.filter === 'unplayed') return !g.lastPlayed;
   if (S.filter.startsWith('genre:')) return genresOf(g).some(x => x.toLowerCase() === S.filter.slice(6).toLowerCase());
@@ -382,7 +413,6 @@ async function dropGame(sourceId,targetId,system,after){
   const index=order.indexOf(sourceId);if(index<0||!order.includes(targetId))return;
   order.splice(index,1);order.splice(order.indexOf(targetId)+(after?1:0),0,sourceId);
   S.orders[system]=order;S.sort='custom';
-  consoleNavigation = null;
   const keep=new Map([...items.values()].map(node=>[node.dataset.id,node]));
   S.list.sort(manualGameSort(system));items.clear();for(let i=0;i<S.list.length;i++){const node=keep.get(S.list[i].id);if(node){node.id='shelf-game-'+i;items.set(i,node);}}
   S.sel=Math.max(0,S.list.findIndex(g=>g.id===sourceId));layout();showInfo();syncShelfTools();saveUi();
@@ -390,7 +420,6 @@ async function dropGame(sourceId,targetId,system,after){
   catch(error){S.orders[system]=oldOrder;S.sort=oldSort;setSystem(system);toast(error.message,5000);}
 }
 function setSystem(id, edge = null) {
-  consoleNavigation = null;
   const previousSystem=S.system;
   S.system = (VIEWS[id] ? S.games.some(g => inView(g, id)) : !systemHidden(id) && (S.games.some(g => g.system === id) || S.config?.systems.some(s => s.id === id && (s.romDir || s.id === 'recomp')))) ? id : 'all';
   if(previousSystem!==S.system)AudioUI.play('system');
@@ -406,7 +435,7 @@ function setSystem(id, edge = null) {
   let list = S.games.filter(g => inView(g, S.system) && (!q || g.title.toLowerCase().includes(q)) && passesFilter(g));
   if (S.system === 'recent') list = list.sort(SORTS.recent).slice(0, 30);
   else if (S.sort === 'custom') list.sort(manualGameSort(S.system));
-  else if (S.sort === 'title' && !S.demo) list.sort(byTitle);
+  else if (S.sort === 'title') list.sort(byTitle);
   else if (SORTS[S.sort]) list = list.sort((a, b) => SORTS[S.sort](a, b) || byTitle(a, b));
   S.list = list;
   LibraryUI.select();
@@ -465,8 +494,7 @@ function saveUi() {
   clearTimeout(uiTimer);
   uiTimer = setTimeout(() => {
     const g = S.list[S.sel]; if (g) lastGame.set(S.system, g.id);
-    // "Hidden games" is a trip to the bin, not a place to reopen in, so it is not remembered.
-    api.saveLibraryUi({ system: S.system, game: g?.id || null, perSystem: Object.fromEntries(lastGame), sort: S.sort, filter: showingHidden() ? '' : S.filter }).catch(() => {});
+    api.saveLibraryUi({ system: S.system, game: g?.id || null, perSystem: Object.fromEntries(lastGame), sort: S.sort, filter: S.filter }).catch(() => {});
   }, 700);
 }
 // Sort, Show (filter) and Random, above the shelf.
@@ -475,10 +503,7 @@ function renderShelfTools() {
   for (const g of S.games.filter(g => !g.hidden)) for (const x of genresOf(g)) { const k = x.toLowerCase(); const c = counts.get(k) || { name: x, n: 0 }; c.n++; counts.set(k, c); }
   const genres = [...counts.values()].filter(c => c.n >= 2 || counts.size <= 12).sort((a, b) => a.name.localeCompare(b.name)).slice(0, 40);
   const opt = (value, label) => `<option value="${esc(value)}">${esc(label)}</option>`;
-  // "Hidden games" only appears once something is hidden; it is how a hidden game is brought back.
-  const hiddenCount = S.games.filter(g => g.hidden).length;
   $('#filterBy').innerHTML = opt('', 'All games') + opt('multi', 'Multiplayer (2+)') + opt('unplayed', 'Not played yet')
-    + (hiddenCount ? opt('hidden', `Hidden games (${hiddenCount})`) : '')
     + (genres.length ? `<optgroup label="Genre">${genres.map(c => opt('genre:' + c.name, c.name)).join('')}</optgroup>` : '');
   if (S.filter && ![...$('#filterBy').options].some(o => o.value === S.filter)) S.filter = '';
   syncShelfTools();
@@ -501,28 +526,6 @@ function cycleSystem(dir) {
   const ids = $$('#systems button').map(b => b.dataset.id);
   const i = (ids.indexOf(S.system) + dir + ids.length) % ids.length;
   setSystem(ids[i]);
-}
-// Browsing never stops at the end of the shelf. On a system's shelf, going past the last game
-// carries on into the next system that has games; All games, Favourites and Recently played are
-// one list already, so they wrap round to the other end.
-let consoleNavigation = null;
-function getConsoleNavigation() {
-  if (consoleNavigation) return consoleNavigation;
-  const ids = $$('#systems button').map(button => button.dataset.id)
-    .filter(id => id !== 'all' && !VIEWS[id] && !systemHidden(id));
-  const shelves = new Map();
-  if (ids.includes(S.system)) {
-    for (const id of ids) shelves.set(id, { games: [], sorted: false });
-    const query = S.query.trim().toLowerCase(), hidden = showingHidden();
-    for (const game of S.games) {
-      const shelf = shelves.get(game.system);
-      if (shelf && !!game.hidden === hidden && (!query || game.title.toLowerCase().includes(query)) && passesFilter(game)) {
-        shelf.games.push(game);
-      }
-    }
-  }
-  consoleNavigation = { ids: ids.filter(id => shelves.get(id)?.games.length), shelves };
-  return consoleNavigation;
 }
 
 // ---------- 3D carousel ----------
@@ -562,12 +565,11 @@ function createMedia(game, a) {
 
 function resizeShelf() {
   DetailsResize.align();
-  const library = $('#view-library');
-  const detailsHidden = document.documentElement.dataset.infoBar === 'hidden';
-  const clearance = detailsHidden
-    ? library.getBoundingClientRect().bottom - $('#libraryHints').getBoundingClientRect().top + 12
-    : $('#info').offsetHeight + 114;
-  library.style.setProperty('--info-clearance', clearance + 'px');
+  const view = $('#view-library'), info = $('#info'), clearance = info.offsetHeight + 114;
+  view.style.setProperty('--info-clearance', `${clearance}px`);
+  // The shelf keeps its clearance, but the Sort/Show row drops to sit just above the details bar.
+  const infoFromBottom = view.getBoundingClientRect().bottom - info.getBoundingClientRect().top;
+  view.style.setProperty('--shelf-tools-drop', `${Math.max(0, Math.round(clearance - infoFromBottom - 8))}px`);
 }
 function revealSelection(delay = 720) {
   clearTimeout(revealTimer);
@@ -576,38 +578,19 @@ function revealSelection(delay = 720) {
   revealId = game?.id || null;
   if (!game) return;
   const selected = revealNode = items.get(S.sel);
-  const reveal = () => {
-    if (S.list[S.sel]?.id !== game.id || !selected?.isConnected) return;
-    if (modelsEnabled() && Appearance.mode()==='bookshelf' && !hasShell(physicalSystem(game))) {
-      const sway = selected.querySelector('.sway');
-      if (!sway.querySelector('.disc-model')) sway.prepend(createMedia(game, art(game)));
-    }
-    selected.classList.add('media-revealed');
-  };
+  const reveal = () => { if (S.list[S.sel]?.id === game.id && selected?.isConnected) selected.classList.add('media-revealed'); };
   if ($('#carousel').classList.contains('shelf-transfer') || shelfTransition) return;
   if (document.documentElement.dataset.motion === 'reduced') reveal();
   else revealTimer = setTimeout(reveal,delay);
-}
-
-// The back of a case. A generated back cover that is still being drawn is filled in when ready;
-// now (the case viewer) draws it straight away.
-function backFace(a, now = false) {
-  const f = el('div', 'face f-back');
-  const show = url => { f.style.backgroundImage = `url("${url}")`; };
-  if (a.back) show(a.back);
-  else a.backLater?.(now).then(show);
-  return f;
 }
 
 function buildBox(game, cls = '') {
   const a = art(game);
   const box = el('div', `box ${a.sys.caseType} ${cls}`);
   box.style.cssText = `--w:${a.W}px;--h:${a.H}px;--d:${a.D}px`;
-  if (a.sys.id === 'snes') box.dataset.packaging = a.sys.packaging || a.sys.id;
-  if(!modelsEnabled()){box.classList.add('flat-cover');box.append(EshopCovers.face(game,a,'f-front'));return {box,a};}
   Packaging.decorate(box,a);
   const face = (c, img) => { const f = el('div', 'face ' + c); if (img) f.style.backgroundImage = `url("${img}")`; return f; };
-  box.append(EshopCovers.face(game,a,'f-front'), backFace(a), Packaging.spine(game,a), face('f-right'), face('f-top'), face('f-bottom'));
+  box.append(EshopCovers.face(game,a,'f-front'), face('f-back', a.back), Packaging.spine(game,a), face('f-right'), face('f-top'), face('f-bottom'));
   Packaging.finish(box,a);
   return { box, a };
 }
@@ -618,21 +601,16 @@ function fillItem(it, game) {
   // Cases are normally shown at a similar size; "real sizes" keeps their true proportions to each other.
   it.dataset.displayScale = S.config?.realCaseSizes ? .95 : Math.min(1.5,323/a.H,300/a.W);
   it.style.setProperty('--w',a.W+'px'); it.style.setProperty('--h',a.H+'px'); it.style.setProperty('--d',a.D+'px');
-  const sway = el('div', 'sway');
-  if(!modelsEnabled()){sway.append(box);it.replaceChildren(sway);return;}
-  const mode = Appearance.mode();
-  if (mode !== 'bookshelf' || (it.classList.contains('media-revealed') && !hasShell(a.sys))) {
-    sway.append(createMedia(game, a));
-  }
-  sway.append(box);
+  const sway = el('div', 'sway'); sway.append(createMedia(game,a),box);
   const reflection=el('div','ground-reflection');reflection.setAttribute('aria-hidden','true');reflection.append(EshopCovers.face(game,a,'reflection-cover'));sway.append(reflection);
   const sh = el('div', 'shadow'); sh.style.top = a.H + 'px';
   it.replaceChildren(sway, sh);
+  if(Appearance.mode()==='swatches')it.append(Appearance.card(game,a));
 }
 
 function makeItem(i) {
   const game = S.list[i];
-  const signature=JSON.stringify([game.title,game.media,game.mediaType,game._aspect,game._eShop,S.config?.realCaseSizes,Appearance.mode(),modelsEnabled()]);
+  const signature=JSON.stringify([game.title,game.media,game.mediaType,game._aspect,game._eShop,S.config?.realCaseSizes,Appearance.mode()]);
   const cached=shelfModels.get(game.id);
   if(cached&&cached.game===game&&cached.signature===signature){const node=cached.node;node.id='shelf-game-'+i;node.classList.remove('sel','media-revealed','console-arrival');node.draggable=!game.demo&&S.system!=='all'&&!VIEWS[S.system];$('#carousel').append(node);return node;}
   const it = el('div', 'item far');
@@ -641,7 +619,25 @@ function makeItem(i) {
   it.id = `shelf-game-${i}`;
   it.setAttribute('role','option'); it.setAttribute('aria-label',`${game.title}, ${sysOf(game.system).name}`);
   fillItem(it, game);
-  it.oncontextmenu = e => { e.preventDefault(); const n = S.list.indexOf(game); if (n >= 0 && n !== S.sel) select(n); openGameMenu(game, e.clientX, e.clientY); };
+  it.oncontextmenu = async event => {
+    event.preventDefault();
+    if (game.demo) return toast('Add your own games to hide library entries.');
+    try {
+      const state = await api.gameContextMenu(game.id);
+      if (state?.action === 'addRecomp') return await addRecompGame();
+      if (state?.action === 'artwork') {
+        const result = await api.artImport({gameId:game.id,kind:'front'});
+        if (result) { updateArtwork(result); toast('Cover artwork updated.'); }
+        return;
+      }
+      if (state?.action === 'executable') return await chooseRecompExecutable(game);
+      if (state?.action === 'folder') return await api.openGameFolder(game.id);
+      if (state?.action === 'mediaType') {editGameDetails(game);$('#editGameMediaType').focus();return;}
+      if (state?.action === 'edit') return editGameDetails(game);
+      if (state?.action === 'sources') return editGameSources(game);
+      if (state) { Object.assign(game, state); refreshHiddenGames(); toast('Game hidden. Restore it in Settings → Hidden games.', 4500); }
+    } catch (e) { toast(e.message); }
+  };
   it.draggable = !game.demo && S.system !== 'all' && !VIEWS[S.system];
   it.ondragstart = event => {
     if(!it.draggable)return event.preventDefault();
@@ -673,11 +669,7 @@ function measure(game) {
   const source=game.media.front;
   img.onload = async () => {
     if(game.media.front!==source)return;
-    // Square packshots (Switch 2 eShop art, and what some scrapers hand back) carry a white bar down
-    // each side. Measured once, the cover fills the case front and the cartridge label instead of
-    // being letterboxed. packshot() returns null unless it really finds those bars, so a normal
-    // cover on any system is left exactly as it is.
-    game._packshot=game.system==='snes'?null:EshopCovers.packshot(img);
+    game._packshot=game.system==='switch2'?EshopCovers.packshot(img):null;
     game._aspect=img.naturalWidth/img.naturalHeight*(game._packshot?.w||1);
     game._eShop=['switch','switch2'].includes(game.system)?EshopCovers.analyze(img):null;
     if(game._eShop) {
@@ -730,64 +722,37 @@ function updateArtwork(result) {
 function caseSize(i) {
   const g = S.list[i]; if (!g) return [230, 323, 24];
   const sys = physicalSystem(g);
-  return Packaging.size(sys) || CASES[sys.caseType] || CASES.dvd;
+  return Packaging.profiles[sys.id]?.size || CASES[sys.caseType] || CASES.dvd;
 }
 function layout() {
   const stage = $('#stage');
-  // Read stage dimensions before writing any case styles.
-  const stageSize = { clientWidth: stage.clientWidth, clientHeight: stage.clientHeight };
-  const scaleLimit = document.documentElement.dataset.infoBar === 'hidden' ? 1.32 : 1.16;
-  const scale = Math.max(.35,Math.min(scaleLimit,(stageSize.clientHeight - 66) / 350, (innerWidth - 240) / 900));
-  const selected = S.list[S.sel];
-  const bookshelfDisc = Appearance.mode()==='bookshelf' && !!selected && !hasShell(physicalSystem(selected));
-  const view=modelsEnabled()?Appearance.geometry(S.sel,bookshelfDisc):{lo:S.sel-3,hi:S.sel+3},lo=view.lo,hi=view.hi;
-  if(view.discPeek!=null)stage.style.setProperty('--bookshelf-disc-peek',view.discPeek+'px');
-  const entering = [];
-  const transferring = $('#carousel').classList.contains('shelf-transfer');
-  const retained = modelsEnabled() ? 2 : 0;
-  for (const [i, e] of items) {
-    if (i < lo - retained || i > hi + retained) {
-      e.remove();
-      items.delete(i);
-    } else if (i < lo || i > hi) {
-      e.classList.add('far');
-      e.classList.remove('sel');
-      e.setAttribute('aria-hidden', 'true');
-      e.setAttribute('aria-selected', 'false');
-    }
-  }
+  // Case size (View & theme): larger carousel cases while details are hidden, still bounded by the stage height.
+  const zoom = Appearance.caseZoom();
+  const scale = Math.max(.35,Math.min(1.16 * zoom,(stage.clientHeight - 66) / 350, (innerWidth - 240) / 900 * zoom));
+  const view=Appearance.geometry(stage,S.sel,S.list.length),lo=view.lo,hi=view.hi;
+  for (const [i, e] of items) if (i < lo - 2 || i > hi + 2) { e.remove(); items.delete(i); }
   for (let i = Math.max(0, lo); i <= Math.min(S.list.length - 1, hi); i++) {
     let e = items.get(i);
     const fresh = !e;
     if (fresh) { e = makeItem(i); items.set(i, e); }
     const d = i - S.sel, a = Math.abs(d);
     const itemScale = scale * Number(e.dataset.displayScale || 1);
-    const placement=modelsEnabled()?Appearance.position(i,S.sel,scale,itemScale,stageSize,view,caseSize):{transform:`translate(${d*270*scale}px,0px) scale(${itemScale*(d===0?1:.7)})`,hidden:a>2},t=placement.transform;
-    if (fresh && !transferring) {
-      e.style.transition = 'none';
-      e.style.transform = t + ' translateY(40px)';
-      entering.push([e, t]);
-    } else e.style.transform = t;
+    const placement=Appearance.position(i,S.sel,scale,itemScale,stage,view,caseSize),t=placement.transform;
+    e.style.setProperty('--rack-shade',placement.shade||0);
+    e.style.width=(placement.width||caseSize(i)[0])+'px';e.style.height=(placement.height||caseSize(i)[1])+'px';
+    if (fresh && !$('#carousel').classList.contains('shelf-transfer')) { e.style.transition = 'none'; e.style.transform = t + ' translateY(40px)'; e.offsetWidth; e.style.transition = ''; }
+    e.style.transform = t;
     e.style.zIndex = 100 - a;
     e.classList.toggle('sel', d === 0);
     e.classList.toggle('far', placement.hidden);
     e.setAttribute('aria-selected',String(d === 0));
     e.setAttribute('aria-hidden',String(placement.hidden));
   }
-  if (entering.length) {
-    // Commit every initial pose with one layout before starting the entry transitions.
-    stage.offsetWidth;
-    for (const [node, transform] of entering) {
-      node.style.transition = '';
-      node.style.transform = transform;
-    }
-  }
   $('#counter').textContent = S.list.length ? `${(S.sel + 1).toLocaleString()} / ${S.list.length.toLocaleString()}` : '';
   $('#shelfPosition').textContent = S.list.length ? `${String(S.sel+1).padStart(2,'0')} / ${S.list.length.toLocaleString()}` : '0 games';
   $('#shelfProgress').style.width = `${S.list.length ? (S.sel+1)/S.list.length*100 : 0}%`;
-  // Browsing wraps on, so the arrows only go dead when there is nowhere at all to go.
-  const stuck = !S.list.length || (S.list.length < 2 && (S.system === 'all' || VIEWS[S.system] || getConsoleNavigation().ids.length < 2));
-  $('#shelfPrev').disabled = stuck; $('#shelfNext').disabled = stuck;
+  $('#shelfPrev').disabled = !S.list.length;
+  $('#shelfNext').disabled = !S.list.length;
   $('#shelfLabel').textContent = viewName(S.system)+' / '+Appearance.layouts[Appearance.mode()].name;
   if (S.list.length) $('#carousel').setAttribute('aria-activedescendant',`shelf-game-${S.sel}`);
   else $('#carousel').removeAttribute('aria-activedescendant');
@@ -798,7 +763,8 @@ function layout() {
 
 let shelfTransition = null;
 function nextConsole(dir) {
-  const { ids } = getConsoleNavigation();
+  const q = S.query.trim().toLowerCase();
+  const ids = S.config.systems.filter(sys => !sys.hidden && S.games.some(g => !g.hidden && g.system === sys.id && (!q || g.title.toLowerCase().includes(q)) && passesFilter(g))).map(sys => sys.id);
   const index = ids.indexOf(S.system);
   return index < 0 || !ids.length ? S.system : ids[(index + dir + ids.length) % ids.length];
 }
@@ -806,20 +772,25 @@ function renderConsolePreviews(force = false) {
   const stage = $('#stage');
   // Keep the outgoing previews intact until their fade has finished.
   if (stage.classList.contains('console-moving') && !force) return;
+  // Neighbouring consoles only appear as you reach the end of the shelf (last two games), fading in from the
+  // edge; in the middle of a console the sides stay clear.
+  const reach = 2;
+  const dismiss = preview => {
+    if (!preview || preview.classList.contains('preview-leaving')) return;
+    preview.classList.add('preview-leaving');
+    setTimeout(() => preview.remove(), 420);
+  };
   for (const dir of [-1, 1]) {
     const cls = dir > 0 ? 'next' : 'previous';
-    let preview = stage.querySelector('.console-preview.' + cls + ':not(.preview-departing)');
+    let preview = stage.querySelector('.console-preview.' + cls + ':not(.preview-departing):not(.preview-leaving)');
     const remaining = dir > 0 ? S.list.length - 1 - S.sel : S.sel;
-    const target = S.list.length && remaining < Math.min(5, S.list.length) ? nextConsole(dir) : S.system;
-    if (target === S.system || !S.list.length || remaining >= Math.min(5, S.list.length)) { preview?.remove(); continue; }
-    const shelf = getConsoleNavigation().shelves.get(target);
-    if (!shelf.sorted) {
-      const sort = SORTS[S.sort];
-      shelf.games.sort(S.sort === 'custom' ? manualGameSort(target) : sort ? (a, b) => sort(a, b) || byTitle(a, b) : byTitle);
-      shelf.sorted = true;
-    }
-    const games = dir > 0 ? shelf.games.slice(0, 3) : shelf.games.slice(-3).reverse();
-    if (!games.length) { preview?.remove(); continue; }
+    const target = S.list.length && remaining < reach ? nextConsole(dir) : S.system;
+    if (target === S.system || !S.list.length || remaining >= reach) { dismiss(preview); continue; }
+    const q = S.query.trim().toLowerCase();
+    let games = S.games.filter(g => inView(g, target) && (!q || g.title.toLowerCase().includes(q)) && passesFilter(g));
+    games.sort(S.sort==='custom'?manualGameSort(target):SORTS[S.sort] ? (a,b) => SORTS[S.sort](a,b) || byTitle(a,b) : byTitle);
+    games = dir > 0 ? games.slice(0, 3) : games.slice(-3).reverse();
+    if (!games.length) { dismiss(preview); continue; }
     if (!preview) {
       preview = el('div', 'console-preview ' + cls);
       preview.setAttribute('aria-hidden', 'true'); preview.inert = true;
@@ -838,18 +809,13 @@ function renderConsolePreviews(force = false) {
       }
       preview.append(name, covers);
     }
-    preview.style.opacity = .65 * (1 - remaining / Math.min(5, S.list.length));
+    preview.style.opacity = remaining === 0 ? .7 : .32;
   }
 }
 function navigateGame(dir) {
   if (!S.list.length || shelfTransition) return;
   const index = S.sel + dir;
   if (index >= 0 && index < S.list.length) return select(index);
-  const target = nextConsole(dir);
-  if (target === S.system) {
-    if (S.list.length > 1) select(dir > 0 ? 0 : S.list.length - 1);
-    return;
-  }
   const carousel = $('#carousel');
   const peek = $('#stage').querySelector('.console-preview.' + (dir > 0 ? 'next' : 'previous') + ' .console-preview-cover')?.getBoundingClientRect();
   const reduced = document.documentElement.dataset.motion === 'reduced';
@@ -868,6 +834,7 @@ function navigateGame(dir) {
     for (const node of outgoing.querySelectorAll('[id]')) node.removeAttribute('id');
     carousel.parentElement.append(outgoing);
   }
+  const target = nextConsole(dir);
   const oldPreviews = reduced ? [] : [...$('#stage').querySelectorAll('.console-preview')];
   if (!reduced) { carousel.classList.add('shelf-transfer'); $('#stage').classList.add('console-moving'); }
   setSystem(target, dir);
@@ -883,7 +850,7 @@ function navigateGame(dir) {
     { transform: 'translateX(' + (-dir * distance) + 'px)' }
   ], options);
   const selected = items.get(S.sel);
-  const face = selected.querySelector('.f-front') || selected;
+  const face = selected.querySelector('.swatch-cover, .f-front') || selected;
   let startScale = .25, startX = dir * distance, startY = 0;
   carousel.style.transformOrigin = '0 0';
   if (peek?.width && peek.height) {
@@ -909,7 +876,7 @@ function navigateGame(dir) {
     { transform:'translateY(-50%) translate3d(0,0,0) scale(1)', opacity:Number(getComputedStyle(node).opacity) },
     { transform:'translateY(-50%) translate3d(' + (-dir * 72) + 'px,0,0) scale(1.025)', opacity:0 }
   ], {...options,fill:'forwards'}));
-  const incomingPreviews = [...$('#stage').querySelectorAll('.console-preview:not(.preview-departing)')];
+  const incomingPreviews = [...$('#stage').querySelectorAll('.console-preview:not(.preview-departing):not(.preview-leaving)')];
   for (const node of incomingPreviews) previewFades.push(node.animate([
     { transform:'translateY(-50%) translate3d(' + (dir * 72) + 'px,0,0) scale(.975)', opacity:0 },
     { transform:'translateY(-50%) translate3d(0,0,0) scale(1)', opacity:Number(node.style.opacity) }
@@ -963,119 +930,6 @@ async function toggleFavorite(g = S.list[S.sel]) {
   if (S.system === 'favorites') setSystem('favorites'); else { LibraryUI.select(); updateFavButton(); }
 }
 
-// ---------- hidden games ----------
-// Hiding writes to PyroCade's own library state. Nothing is renamed, moved or deleted in the
-// ROM folder, and "Show → Hidden games" lists everything that was hidden so it can come back.
-function updateHideButton() {
-  const g = S.list[S.sel], b = $('#btnHide'); if (!b) return;
-  const hidden = !!g?.hidden;
-  b.setAttribute('aria-pressed', String(hidden));
-  b.textContent = hidden ? '⊙ Unhide' : '⊘ Hide';
-  b.title = hidden ? 'Show this game in the library again (Delete)' : 'Hide this game from the library (Delete). Your ROM folder is not touched.';
-}
-async function toggleHidden(g = S.list[S.sel]) {
-  if (!g) return;
-  if (g.demo || !api.setHidden) return toast('Hiding works with your own games. Add your ROM folders in Settings.');
-  const want = !g.hidden;
-  try { g.hidden = (await api.setHidden({ gameId: g.id, hidden: want })).hidden; } catch (e) { return toast(e.message); }
-  AudioUI.play(want ? 'back' : 'confirm');
-  toast(want ? `${g.title} hidden. Show → Hidden games brings it back.` : `${g.title} is back in the library.`, 4500);
-  refreshHiddenGames();
-}
-
-// ---------- rename ----------
-// Only the title PyroCade shows changes; the file on disk keeps its name. An empty box puts the
-// scanned title back. Kept in library-state.json next to favourites and hidden games.
-let renaming = null;
-function openRename(g = S.list[S.sel]) {
-  if (!g) return;
-  if (g.demo || !api.setTitle) return toast('Renaming works with your own games. Add your ROM folders in Settings.');
-  renaming = g;
-  $('#renameGameFile').textContent = g.scannedTitle && g.scannedTitle !== g.title ? `File name: ${g.scannedTitle}` : g.base || '';
-  const input = $('#renameInput');
-  input.value = g.title; input.placeholder = g.scannedTitle || g.title;
-  $('#renameReset').disabled = !g.customTitle;
-  AudioUI.play('open');
-  $('#renameGame').showModal();
-  input.focus(); input.select();
-}
-async function applyRename(wanted) {
-  const g = renaming; if (!g) return;
-  $('#renameGame').close();
-  // Typing the scanned title back is the same as asking for the file name again.
-  const clean = String(wanted || '').replace(/\s+/g, ' ').trim();
-  const title = clean === (g.scannedTitle || '') ? '' : clean;
-  if (title === (g.customTitle || '')) return;
-  let result;
-  try { result = await api.setTitle({ gameId: g.id, title }); } catch (e) { return toast(e.message); }
-  Object.assign(g, { title: result.title, customTitle: result.customTitle });
-  AudioUI.play('confirm');
-  toast(result.customTitle ? `Renamed to ${result.title}.` : `${result.title} uses its file name again.`);
-  // The scan hands the library over already sorted by title, so a renamed game has to be put back
-  // in its place here; the default "Title" sort does no sorting of its own.
-  S.games.sort(byTitle);
-  renderChips(); setSystem(S.system);
-  const it = [...items.values()].find(e => e.dataset.id === g.id);
-  if (it) it.setAttribute('aria-label', `${g.title}, ${sysOf(g.system).name}`);
-}
-$('#closeRename').onclick = () => $('#renameGame').close();
-$('#renameReset').onclick = () => applyRename('');
-$('#renameForm').addEventListener('submit', e => { e.preventDefault(); applyRename($('#renameInput').value); });
-$('#renameGame').addEventListener('close', () => { renaming = null; });
-const renameOpen = () => $('#renameGame').open;
-
-// ---------- right-click a game ----------
-// Everything the buttons under the shelf do, on the game you pointed at.
-function closeGameMenu() { const m = $('#gameMenu'); if (!m.hidden) { m.hidden = true; m.replaceChildren(); } }
-function openGameMenu(g, x, y) {
-  const m = $('#gameMenu');
-  m.replaceChildren();
-  const title = el('div', 'game-menu-title', esc(g.title)); m.append(title);
-  const sep = () => m.append(el('hr'));
-  const add = (icon, label, run, disabled) => {
-    const b = el('button', '', `<i>${icon}</i><span>${esc(label)}</span>`);
-    b.type = 'button'; b.setAttribute('role', 'menuitem'); b.disabled = !!disabled;
-    b.onclick = () => { closeGameMenu(); run(); };
-    m.append(b); return b;
-  };
-  add('▶', 'Play', () => play(g));
-  add('⟲', 'Open case', () => { if (S.list[S.sel] !== g) select(S.list.indexOf(g)); openCase(); });
-  add('▤', 'Manual', () => manual(g), !g.media.manual);
-  sep();
-  add(g.favorite ? '★' : '☆', g.favorite ? 'Remove from Favourites' : 'Add to Favourites', () => toggleFavorite(g));
-  add('✎', 'Rename…', () => openRename(g));
-  add('✎', 'Edit details…', () => editGameDetails(g), g.demo);
-  add('▣', 'Media type…', () => { editGameDetails(g); $('#editGameMediaType').focus(); }, g.demo);
-  add('↗', 'Open game folder', () => api.openGameFolder(g.id).catch(e => toast(e.message)), g.demo);
-  if (g.system === 'recomp') {
-    add('+', 'Add Recomp game…', () => addRecompGame());
-    add('↗', 'Choose game .exe…', () => chooseRecompExecutable(g));
-  }
-  add(g.hidden ? '⊙' : '⊘', g.hidden ? 'Unhide' : 'Hide from the library', () => toggleHidden(g));
-  sep();
-  add('⚙', 'Emulator…', () => openEmuChoice(g));
-  add('🖼', 'Artwork', () => { if (S.list[S.sel] !== g) select(S.list.indexOf(g)); showView('artwork'); ArtworkUI.open('game'); });
-  add('🖼', 'Choose artwork image…', async () => {
-    try {
-      const result = await api.artImport({gameId:g.id,kind:'front'});
-      if (result) { updateArtwork(result); toast('Cover artwork updated.'); }
-    } catch (e) { toast(e.message); }
-  }, g.demo);
-  // Shown off-screen first, so its real size decides which way it opens near an edge.
-  m.style.left = '0px'; m.style.top = '0px'; m.hidden = false;
-  const r = m.getBoundingClientRect();
-  m.style.left = Math.max(8, Math.min(x, innerWidth - r.width - 8)) + 'px';
-  m.style.top = Math.max(8, Math.min(y, innerHeight - r.height - 8)) + 'px';
-  AudioUI.play('open');
-  m.querySelector('button:not(:disabled)')?.focus();
-}
-const gameMenuOpen = () => !$('#gameMenu').hidden;
-document.addEventListener('pointerdown', e => { if (gameMenuOpen() && !e.target.closest('#gameMenu')) closeGameMenu(); }, true);
-addEventListener('blur', closeGameMenu);
-addEventListener('resize', closeGameMenu);
-// The shelf background and the arrows are not games, so a right-click there has no menu.
-$('#carousel').addEventListener('contextmenu', e => { if (!e.target.closest('.item')) closeGameMenu(); });
-
 // ---------- play time ----------
 function applyStats(p) {
   const g = S.games.find(x => x.id === p.gameId); if (!g) return;
@@ -1101,26 +955,53 @@ function regionOf(g) {
 }
 function renderGameScreenshot(game) {
   const shot = $('#gShot'), image = game.media.screenshot || game.media.title;
-  const video = !image && game.media.video, autoplay = S.config.animationsEnabled !== false;
-  const key = JSON.stringify([game.id,image,video,autoplay]);
+  const video = !image && game.media.video;
+  const key = JSON.stringify([game.id,image,video]);
   if (shot._mediaKey === key) return;
   shot._mediaKey = key; shot.replaceChildren(); shot.style.display = '';
   shot.style.backgroundImage = image ? 'url("' + image + '")' : '';
   shot.classList.toggle('shot-empty', !image && !video);
   shot.title = 'Right-click to add or change the screenshot image';
-  if (video) { const node = el('video');Object.assign(node,{src:video,muted:true,autoplay,loop:true});shot.append(node); }
+  if (video) { const node = el('video');Object.assign(node,{src:video,muted:true,autoplay:true,loop:true});shot.append(node); }
   else if (!image) shot.append(el('span','screenshot-placeholder','Right-click to add screenshot'));
 }
 async function chooseGameScreenshot() {
   const game = S.list[S.sel];if (!game || game.demo) return;
   try {
-    if (!await api.screenshotContextMenu(game.id)) return;
+    const choice = await api.screenshotContextMenu(game.id);
+    if (choice === 'sources') return editGameSources(game);
+    if (!choice) return;
     const result = await api.artImport({gameId:game.id,kind:'screenshot'});
     if (result) { updateArtwork(result);if(S.list[S.sel]===game)renderGameScreenshot(game);toast('Screenshot updated.'); }
   } catch(e) { toast(e.message,5000); }
 }
 $('#gShot').oncontextmenu = event => {event.preventDefault();return chooseGameScreenshot();};
 $('#gShot').onkeydown = event => {if(['ContextMenu','Enter',' '].includes(event.key)||event.shiftKey&&event.key==='F10'){event.preventDefault();event.stopPropagation();chooseGameScreenshot();}};
+// The description ends with "…" after the last word that fits. Hovering or focusing it switches to a
+// scrollable view of the full text (with a bottom fade while more remains); leaving returns to the "…" view.
+let descExpanded = false, descFitFrame = 0;
+function updateDescFade() { const d = $('#gDesc'); d.classList.toggle('at-end', d.scrollHeight - d.scrollTop - d.clientHeight < 2); }
+function fitDescription() {
+  descFitFrame = 0;
+  const actions = $('#info .actions'); actions.classList.toggle('overflowing', actions.scrollWidth > actions.clientWidth + 1);
+  const d = $('#gDesc');
+  d.classList.remove('clamped'); d.style.removeProperty('-webkit-line-clamp');
+  if (descExpanded || d.classList.contains('hidden') || !d.clientHeight) { updateDescFade(); return; }
+  if (d.scrollHeight <= d.clientHeight + 1) { updateDescFade(); return; } // everything fits
+  const line = parseFloat(getComputedStyle(d).lineHeight) || 20;
+  d.style.setProperty('-webkit-line-clamp', String(Math.max(1, Math.floor((d.clientHeight + 1) / line))));
+  d.classList.add('clamped');
+}
+const scheduleDescFit = () => { if (!descFitFrame) descFitFrame = requestAnimationFrame(fitDescription); };
+const setDescExpanded = expanded => { if (descExpanded === expanded) return; descExpanded = expanded; const d = $('#gDesc'); if (!expanded) d.scrollTop = 0; fitDescription(); };
+$('#gDesc').addEventListener('scroll', updateDescFade, { passive: true });
+$('#gDesc').addEventListener('pointerenter', () => setDescExpanded(true));
+$('#gDesc').addEventListener('pointerleave', () => { if (document.activeElement !== $('#gDesc')) setDescExpanded(false); });
+$('#gDesc').addEventListener('focus', () => setDescExpanded(true));
+$('#gDesc').addEventListener('blur', () => setDescExpanded(false));
+$('#gDesc').addEventListener('transitionend', e => { if (e.propertyName === 'font-size') scheduleDescFit(); });
+new ResizeObserver(scheduleDescFit).observe($('#info .info-text'));
+addEventListener('resize', scheduleDescFit);
 async function showInfo(quiet) {
   const g = S.list[S.sel];
   const info = $('#info');
@@ -1133,15 +1014,18 @@ async function showInfo(quiet) {
   $('#gSystem').textContent = a.sys.name;
   // A clear logo replaces the title text when there is one; the text stays for screen readers.
   const titleEl = $('#gTitle');
-  titleEl.textContent = g.title;
+  titleEl.textContent = g.title; titleEl.title = g.title;
   titleEl.classList.toggle('has-logo', !!g.media.logo && !g.customTitle);
   titleEl.style.setProperty('--logo', g.media.logo ? `url("${g.media.logo}")` : 'none');
   const ext = !g.romPath ? null : /[\\/]exefs[\\/]main$/i.test(g.romPath) ? 'FOLDER DUMP' : g.romPath.split('.').pop().toUpperCase();
-  $('#gMeta').innerHTML = [g.info.year, g.info.developer, g.info.genre, g.version && `Version ${g.version}`, g.info.players && `${g.info.players} player${g.info.players === '1' ? '' : 's'}`, regionOf(g), ext,
-    g.discs?.length > 1 && `${g.discs.length} discs`, ...playSummary(g)]
-    .filter(Boolean).map(x => `<span>${esc(x)}</span>`).join('');
+  // The version sits right under the title; the rest of the facts share one line that ends in "…".
+  const version = $('#gVersion'); version.textContent = g.version ? `Version ${g.version}` : ''; version.hidden = !g.version; version.title = version.textContent;
+  const facts = [g.info.year, g.info.developer, g.info.genre, g.info.players && `${g.info.players} player${g.info.players === '1' ? '' : 's'}`, regionOf(g), ext,
+    g.discs?.length > 1 && `${g.discs.length} discs`, ...playSummary(g)].filter(Boolean);
+  $('#gMeta').innerHTML = facts.map(x => `<span>${esc(x)}</span>`).join('');
+  $('#gMeta').title = facts.join(' · ');
   $('#btnManual').disabled = !g.media.manual;
-  updateEmuButton(); updateFavButton(); updateHideButton();
+  updateEmuButton(); updateFavButton();
   renderGameScreenshot(g);
   if (quiet) {
     const bg=$(bgFlip ? '#bgB' : '#bgA');setGameBackground(bg,g,a);
@@ -1151,6 +1035,7 @@ async function showInfo(quiet) {
   }
   $('#gDesc').textContent = g.info.description || '';
   $('#gDesc').classList.toggle('hidden',!g.info.description);
+  $('#gDesc').scrollTop = 0; scheduleDescFit();
   $('#btnManual').disabled = !g.media.manual;
   info.classList.remove('swap'); info.offsetWidth; info.classList.add('swap');
   resizeShelf();
@@ -1235,10 +1120,11 @@ $('#manualClose').onclick = closeManual;
 // ---------- case viewer ----------
 const CV = { open: false, rx: 8, ry: 32, tx: 0, z: 0, game: null, anim: null, token:0, timer:null };
 function rig() {
-  if(!modelsEnabled()){$('#caseRig').style.transform=`scale(${Math.max(.5,Math.min(2,1+CV.z/1000))})`;return;}
   $('#caseRig').style.transform = `translateX(${CV.tx}px) translateZ(${CV.z}px) rotateX(${CV.rx}deg) rotateY(${CV.ry}deg)`;
   const c=$('#caseRig .case');
-  if(c)c.style.setProperty('--light-x',(30+Math.sin(CV.ry*Math.PI/180)*35)+'%');
+  // The moving highlight is set on the gloss layers themselves (not inherited from the case root, which would
+  // restyle every part of the case on each drag move, in both 3D eyes too), in whole percent steps.
+  if(c){const lx=Math.round(30+Math.sin(CV.ry*Math.PI/180)*35);if(c._lightX!==lx){c._lightX=lx;for(const f of c._finishes||=c.querySelectorAll('.case-surface-finish'))f.style.setProperty('--light-x',lx+'%');}}
   // Flat captions turn into stray lines when seen edge-on; hide them while the case faces sideways.
   if(c){const a=Math.abs(((CV.ry%360)+540)%360-180);c.classList.toggle('side-view',a<130&&a>50);}
 }
@@ -1269,15 +1155,12 @@ async function openCase() {
   c.style.cssText = `--w:${a.W}px;--h:${a.H}px;--d:${a.D}px;left:${-a.W / 2}px;top:${-a.H / 2}px`;
   Packaging.decorate(c,a);
   const face = (cl, img) => { const f = el('div', 'face ' + cl); if (img) f.style.backgroundImage = `url("${img}")`; return f; };
-  if(!modelsEnabled()){
-    c.classList.add('flat-case');c.append(EshopCovers.face(g,a,'f-front'),backFace(a,true));
-  }else{
-  c.append(backFace(a,true), Packaging.spine(g,a), face('f-right'), face('f-top'), face('f-bottom'), el('div', 'face tray'));
+  c.append(face('f-back', a.back), Packaging.spine(g,a), face('f-right'), face('f-top'), face('f-bottom'), el('div', 'face tray'));
   if(cardboard){c.querySelector('.f-top').remove();c.append(EshopCovers.face(g,a,'f-front'));}
 
   c.append(createMedia(g,a));
   const man = el('div', 'manual'), page = el('div', 'page');
-  page.style.backgroundImage = `url("${await Art.manual(g, a.sys, a.front, a.W, a.H, Packaging.design(a.sys))}")`;
+  page.style.backgroundImage = `url("${await Art.manual(g, a.sys, a.front, a.W, a.H)}")`;
   if (CV.token !== token) return;
   if(a.digital||a.packshot) {
     page.style.backgroundImage='none';page.classList.add('manual-custom-cover');
@@ -1298,9 +1181,7 @@ async function openCase() {
   else lid.append(EshopCovers.face(g,a,'l-front'), face('l-inner'));
   c.append(lid);
   Packaging.finish(c,a);
-  }
   r.append(c);
-  $('#cvToggle').disabled=!modelsEnabled();
 
   $('#cvSystem').textContent = a.sys.name; $('#cvTitle').textContent = g.title;
   renderDiscChoice(g);
@@ -1309,7 +1190,6 @@ async function openCase() {
   $('#view-library').inert = true; $('header').inert = true;
   $('#caseView').setAttribute('role','dialog'); $('#caseView').setAttribute('aria-modal','true'); $('#caseView').setAttribute('aria-labelledby','cvTitle');
   $('#cvBack').focus({preventScroll:true});
-  if(!modelsEnabled()){Object.assign(CV,{rx:0,ry:0,tx:0,z:0,open:false});rig();renderPrompts();return;}
   Object.assign(CV, { rx: 14, ry: 48, tx: 0, z: -400, open: false }); rig();
   tween({ rx: 6, ry: 18, z: 0 }, 800);
   renderPrompts();
@@ -1368,7 +1248,6 @@ $('#shotViewer').addEventListener('close', () => { $('#shotImage').removeAttribu
 
 function setOpen(v) {
   const c = $('#caseRig .case'); if (!c) return;
-  if(!modelsEnabled())return;
   if(CV.open!==v)AudioUI.play(v?'open':'back');
   CV.open = v; c.classList.toggle('open', v);
   renderPrompts();
@@ -1559,16 +1438,12 @@ function renderSettings() {
   const c = S.config;
   $('#sPrompts').value = promptPreference;
   $('#sMotion').value = motionPreference;
-  $('#sDisableModels').checked = !modelsEnabled();
-  $('#sDisableAnimations').checked = c.animationsEnabled === false;
-  $('#sMotion').disabled = c.animationsEnabled === false;
   $('#sChromeMode').value = S.config.libraryChromeMode === 'hidden' ? 'hidden' : 'shown';
   $('#sDetailsPinned').checked = !!S.config.libraryDetailsPinned;
   $('#sEshop').value = eShopStyle;
   $('#sAmbient').value = String(c.ambient?.idleMinutes ?? 2);
   $('#sBackground').value = c.ambient?.background || (c.ambient?.ribbon === false ? 'off' : 'ribbon');
   $('#sMedia').value = c.mediaRoot || '';
-  $('#sFullscreen').checked = !!c.fullscreen;
   $('#sLaunchFx').checked = c.launchAnimation !== false;
   $('#sRealSizes').checked = !!c.realCaseSizes;
   $('#sWear').checked = !!c.wornCases;
@@ -1835,20 +1710,12 @@ function showView(v) {
   if (v === 'library') { resizeShelf(); layout(); }
 }
 $$('#tabs button').forEach(b => (b.onclick = () => showView(b.dataset.view)));
-const quitButton = $('#btnQuit');
-if (api.quitApp) {
-  quitButton.hidden = false;
-  quitButton.onclick = async () => {
-    try { await api.quitApp(); } catch (e) { toast(e.message); }
-  };
-}
 $('#btnPlay').onclick = () => play();
 $('#btnCase').onclick = openCase;
 $('#btnManual').onclick = () => manual();
 $('#btnArtwork').onclick = () => {showView('artwork');ArtworkUI.open('game');};
 $('#btnEmulator').onclick = () => S.list[S.sel]?.system === 'recomp' ? chooseRecompExecutable(S.list[S.sel]) : openEmuChoice();
 $('#btnFavorite').onclick = () => toggleFavorite();
-$('#btnHide').onclick = () => toggleHidden();
 $('#closeEmuChoice').onclick = () => $('#emuChoice').close();
 // One game can use its own emulator, for example a fork made for that game.
 const emuChoiceOpen = () => $('#emuChoice').open;
@@ -1898,44 +1765,40 @@ function updateEmuButton() {
 $('#cvPlay').onclick = () => play(CV.game);
 $('#cvBack').onclick = closeCase;
 $('#cvToggle').onclick = () => setOpen(!CV.open);
-$('#cvFlip').onclick = () => {if(!modelsEnabled())$('#caseRig .case')?.classList.toggle('flat-back');else tween({ ry: CV.ry + 180 }, 900);};
+$('#cvFlip').onclick = () => tween({ ry: CV.ry + 180 }, 900);
 $('#shelfPrev').onclick = () => navigateGame(-1);
 $('#shelfNext').onclick = () => navigateGame(1);
 let surfaceLightFrame=null;
 $('#stage').addEventListener('pointermove',e=>{
-  if(surfaceLightFrame!==null||document.documentElement.dataset.motion==='reduced')return;
+  // In Leia SR 3D every style change re-renders both full-resolution eye views, so the pointer-following
+  // glare stays put there; mouse movement then costs no stereo rendering at all.
+  if(surfaceLightFrame!==null||document.documentElement.dataset.motion==='reduced'||document.documentElement.dataset.leiaRendering==='true')return;
   const box=document.querySelector('.item.sel .box');if(!box)return;
   const x=e.clientX,y=e.clientY;
   surfaceLightFrame=requestAnimationFrame(()=>{
     surfaceLightFrame=null;if(!box.isConnected)return;
     const r=box.getBoundingClientRect();
-    box.style.setProperty('--light-x',Math.max(0,Math.min(100,100*(x-r.left)/r.width))+'%');
-    box.style.setProperty('--light-y',Math.max(0,Math.min(100,100*(y-r.top)/r.height))+'%');
+    // Set on the gloss layers only, so the rest of the case is not restyled on every mouse move.
+    for(const f of box.querySelectorAll('.case-surface-finish')){
+      f.style.setProperty('--light-x',Math.round(Math.max(0,Math.min(100,100*(x-r.left)/r.width)))+'%');
+      f.style.setProperty('--light-y',Math.round(Math.max(0,Math.min(100,100*(y-r.top)/r.height)))+'%');
+    }
   });
 });
 $('#stage').addEventListener('pointerleave',()=>{
   cancelAnimationFrame(surfaceLightFrame);surfaceLightFrame=null;
-  const box=document.querySelector('.item.sel .box');box?.style.removeProperty('--light-x');box?.style.removeProperty('--light-y');
+  for(const f of document.querySelectorAll('.item.sel .box .case-surface-finish')){f.style.removeProperty('--light-x');f.style.removeProperty('--light-y');}
 });
 let wheelAt = 0;
 $('#stage').addEventListener('wheel', e => {
   const delta = Math.abs(e.deltaX)>Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
-  if (Math.abs(delta)>12 && performance.now()-wheelAt>170) { select(S.sel+Math.sign(delta)); wheelAt=performance.now(); }
+  if (Math.abs(delta)>12 && performance.now()-wheelAt>170) { const step=Appearance.mode()==='swatches'?Appearance.geometry($('#stage'),S.sel,S.list.length).columns:1;select(S.sel+Math.sign(delta)*step); wheelAt=performance.now(); }
 }, { passive: true });
 
 const libraryActive = () => $('#view-library').classList.contains('active');
 function input(action) {
-  if (FeedbackUI.isOpen()) { FeedbackUI.controller(action); return; }
   LibraryChrome.activity();
   if(document.querySelector('.launch-fx'))return; // a game is starting
-  if(renameOpen())return; // the box has the keyboard
-  if(gameMenuOpen()){
-    const opts=[...$$('#gameMenu button')].filter(b=>!b.disabled),i=opts.indexOf(document.activeElement);
-    if(action==='back')closeGameMenu();
-    else if(action==='play')document.activeElement?.click();
-    else if(['up','left','down','right'].includes(action))opts[(i+(['up','left'].includes(action)?-1:1)+opts.length)%opts.length]?.focus();
-    return;
-  }
   if(manualOpen()){if(action==='back'||action==='manual')closeManual();return;}
   if(shotOpen()){if(action==='back')$('#shotViewer').close();else if(action==='left'||action==='right')stepShot(action==='left'?-1:1);return;}
   if ($('#gameDetailsEditor').open) return;
@@ -1964,11 +1827,11 @@ function input(action) {
   }
   if (!libraryActive()) return;
   if(action==='sysprev'||action==='sysnext'){cycleSystem(action==='sysprev'?-1:1);return;}
-  if(['up','down'].includes(action)&&Appearance.browsesVertically()){select(S.sel+(action==='up'?-1:1));return;}
+  if(['up','down'].includes(action)&&['vertical','swatches'].includes(Appearance.mode())){const delta=Appearance.mode()==='swatches'?Appearance.geometry($('#stage'),S.sel,S.list.length).columns:1;select(S.sel+(action==='up'?-delta:delta));return;}
   ({ left: () => navigateGame(-1), right: () => navigateGame(1), up: () => cycleSystem(-1), down: () => cycleSystem(1),
-     play: () => play(), case: openCase, manual: () => manual(), favorite: () => toggleFavorite(), hide: () => toggleHidden(), random: randomGame, pgup: () => select(S.sel - 10), pgdn: () => select(S.sel + 10) }[action] || (() => {}))();
+     play: () => play(), case: openCase, manual: () => manual(), favorite: () => toggleFavorite(), random: randomGame, pgup: () => select(S.sel - 10), pgdn: () => select(S.sel + 10) }[action] || (() => {}))();
 }
-// Search the library without moving focus on ordinary key presses.
+// Search: start typing anywhere in the library to filter.
 let searchT;
 $('#search').addEventListener('input', e => {
   clearTimeout(searchT);
@@ -1991,13 +1854,7 @@ document.addEventListener('click', e => {
 });
 document.addEventListener('keydown', e => {
   usePromptInput('keyboard');
-  if (FeedbackUI.isOpen()) return;
   if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'&&libraryActive()&&!caseShown()){e.preventDefault();LibraryUI.openPicker();return;}
-  if(renameOpen())return;
-  if(gameMenuOpen()){
-    if(['ArrowUp','ArrowDown','Escape','Enter',' '].includes(e.key)){e.preventDefault();input({ArrowUp:'up',ArrowDown:'down',Escape:'back',Enter:'play',' ':'play'}[e.key]);}
-    return;
-  }
   if ($('#gameDetailsEditor').open) return;
   if(LibraryUI.pickerOpen()||Appearance.panelOpen()||emuChoiceOpen())return;
   if(shotOpen()&&e.key==='Tab')return;
@@ -2009,11 +1866,6 @@ document.addEventListener('keydown', e => {
     return;
   }
   if (e.target.matches?.('input, select, textarea')) return;
-  if (libraryActive() && !caseShown() && e.key === '/' && !e.ctrlKey && !e.altKey && !e.metaKey) {
-    e.preventDefault();
-    $('#search').focus();
-    return;
-  }
   if (libraryActive() && !caseShown() && e.key.toLowerCase() === 'o' && !e.ctrlKey && !e.altKey && !e.metaKey) { e.preventDefault(); if (!e.repeat) LibraryChrome.cycle(); return; }
   if (libraryActive() && !caseShown() && e.key.toLowerCase() === 'i' && !e.ctrlKey && !e.altKey && !e.metaKey) { e.preventDefault(); if (!e.repeat) toggleGameDetails(); return; }
   if (e.target.matches?.('button,a') && (e.key === 'Enter' || e.key === ' ')) {
@@ -2021,7 +1873,7 @@ document.addEventListener('keydown', e => {
     if (!(pointerFocus && libraryActive() && !caseShown() && !e.target.closest('dialog'))) return;
     e.target.blur();
   }
-  const map = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down', Enter: 'play', ' ': 'case', Escape: 'back', m: 'manual', M: 'manual', f: 'favorite', F: 'favorite', Delete: 'hide', PageUp: 'pgup', PageDown: 'pgdn' };
+  const map = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down', Enter: 'play', ' ': 'case', Escape: 'back', m: 'manual', M: 'manual', f: 'favorite', F: 'favorite', PageUp: 'pgup', PageDown: 'pgdn' };
   if (map[e.key]) { e.preventDefault(); input(caseShown() && e.key === ' ' ? 'back' : map[e.key]); }
 });
 
@@ -2059,13 +1911,6 @@ document.addEventListener('wheel', () => usePromptInput('keyboard'), {passive:tr
 
 // "Used copies": scuffed cases and faded labels. Real case sizes are applied when the shelf is built.
 function applyCaseLook() { document.documentElement.dataset.wear = S.config?.wornCases ? 'on' : 'off'; }
-// Fullscreen belongs to the window, so it switches at once instead of waiting for "Save & rescan".
-// The window reports back, which also keeps the box right after F11 or the title bar.
-$('#sFullscreen').addEventListener('change', async e => {
-  if (!api.setFullscreen) return;
-  try { await api.setFullscreen(e.target.checked); } catch (err) { e.target.checked = !e.target.checked; toast(err.message); }
-});
-api.onFullscreen?.(on => { if (S.config) S.config.fullscreen = on; const box = $('#sFullscreen'); if (box) box.checked = on; });
 ['sRealSizes', 'sWear'].forEach(id => $('#' + id).addEventListener('change', () => {
   S.config = { ...S.config, realCaseSizes: $('#sRealSizes').checked, wornCases: $('#sWear').checked };
   applyCaseLook(); for (const it of items.values()) { const g = S.games.find(x => x.id === it.dataset.id); if (g) fillItem(it, g); } if (S.list.length) layout();
@@ -2074,28 +1919,9 @@ const motionQuery = matchMedia('(prefers-reduced-motion: reduce)');
 let motionPreference = 'auto';
 function applyMotion(value) {
   motionPreference = ['auto','full','reduced'].includes(value) ? value : 'auto';
-  document.documentElement.dataset.animations = S.config?.animationsEnabled === false ? 'off' : 'on';
-  document.documentElement.dataset.motion = S.config?.animationsEnabled === false || motionPreference === 'reduced' || (motionPreference === 'auto' && motionQuery.matches) ? 'reduced' : 'full';
+  document.documentElement.dataset.motion = motionPreference === 'reduced' || (motionPreference === 'auto' && motionQuery.matches) ? 'reduced' : 'full';
   if (S.config) revealSelection();
 }
-function modelsEnabled(){return S.config?.modelsEnabled !== false;}
-function applyPerformance(){
-  document.documentElement.dataset.models=modelsEnabled()?'on':'off';
-  applyMotion(motionPreference);
-  $('#sMotion').disabled=S.config?.animationsEnabled===false;
-  if(S.config?.animationsEnabled===false){Ambient.exit();document.querySelectorAll('video').forEach(v=>v.pause());cancelAnimationFrame(CV.anim);}
-  if(!S.config)return;
-  for(const it of items.values())it.remove();items.clear();
-  if(S.list.length)layout();
-}
-let performanceSave=Promise.resolve();
-for(const id of ['sDisableModels','sDisableAnimations'])$('#'+id).addEventListener('change',()=>{
-  S.config.modelsEnabled=!$('#sDisableModels').checked;S.config.animationsEnabled=!$('#sDisableAnimations').checked;
-  if(caseShown())closeCase();
-  applyPerformance();
-  const snapshot=structuredClone(S.config);
-  performanceSave=performanceSave.catch(()=>{}).then(()=>api.setConfig(snapshot)).catch(()=>toast('Performance settings could not be saved. Please try again.'));
-});
 motionQuery.addEventListener('change',() => applyMotion(motionPreference));
 $('#sMotion').addEventListener('change',e => applyMotion(e.target.value));
 const applyAmbient=()=>{Ambient.configure({idleMinutes:Number($('#sAmbient').value)||0,background:$('#sBackground').value});Appearance.syncBackground()};
@@ -2134,7 +1960,7 @@ function pollPad(now) {
     } else { pad.quitSince = 0; pad.quitSent = false; }
     for (const [k, v] of Object.entries(st)) {
       if (playing || quitCombo) { pad.held[k] = v; continue; }
-      const repeat = ['left', 'right'].includes(k)||(['up','down'].includes(k)&&(LibraryUI.pickerOpen()||Appearance.panelOpen()||Appearance.browsesVertically()));
+      const repeat = ['left', 'right'].includes(k)||(['up','down'].includes(k)&&(LibraryUI.pickerOpen()||Appearance.panelOpen()||['vertical','swatches'].includes(Appearance.mode())));
       if (v && !woke && (!pad.held[k] || (repeat && now > pad.next[k]))) { input(k); pad.next[k] = now + (pad.held[k] ? 90 : 380); }
       pad.held[k] = v;
     }

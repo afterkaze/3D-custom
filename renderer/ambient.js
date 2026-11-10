@@ -112,7 +112,8 @@ const Ambient=(()=>{
   }
   function frame(now){
     raf=requestAnimationFrame(frame);
-    if(document.hidden||root.classList.contains('in-game')||now-last<(isPixel()?45:33))return;
+    // While the SR overlay covers the launcher window, only the stereo eyes need the background.
+    if(document.hidden||root.classList.contains('in-game')||now-last<(isPixel()?45:33)||(!window.leiaEye&&root.dataset.leiaRendering==='true'))return;
     lastDt=Math.min(.1,(now-last)/1000)*(active?1.5:1);t+=lastDt;last=now;paint(now);
   }
   function run(){
@@ -126,7 +127,7 @@ const Ambient=(()=>{
   }
 
   // ---- idle screensaver ----
-  function eligible(){return root.dataset.animations!=='off'&&!!context?.canRun()}
+  function eligible(){return !!context?.canRun()}
   function arm(){
     clearTimeout(idleTimer);if(!idleMinutes||active)return;
     idleTimer=setTimeout(()=>eligible()?enter():arm(),idleMinutes*60000);

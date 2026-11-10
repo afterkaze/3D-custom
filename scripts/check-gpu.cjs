@@ -1,0 +1,2 @@
+const {app,BrowserWindow}=require('electron');if(process.argv.includes('--high'))app.commandLine.appendSwitch('force-high-performance-gpu');
+app.whenReady().then(async()=>{const win=new BrowserWindow({show:false});await win.loadURL('data:text/html,<canvas></canvas>');await new Promise(r=>setTimeout(r,800));const info=await app.getGPUInfo('complete');console.log(JSON.stringify({high:process.argv.includes('--high'),devices:info.gpuDevice,renderer:info.auxAttributes?.glRenderer,software:info.auxAttributes?.softwareRendering,features:app.getGPUFeatureStatus()}));app.exit(0)});

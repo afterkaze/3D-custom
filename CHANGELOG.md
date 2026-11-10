@@ -2,82 +2,6 @@
 
 All notable changes to PyroCade. Downloads are on the [releases page](https://github.com/Pyrodrifter/PyroCade/releases).
 
-## [Unreleased]
-
-## [0.8.2] - 2026-11-08
-
-### Added
-- **Quit application** in Settings closes PyroCade, including in fullscreen mode.
-
-### Changed
-- Refreshed the README screenshots and demo with games from the GameCube, PlayStation and Game Boy Advance libraries.
-
-## [0.8.1] - 2026-11-08
-
-### Changed
-- **The instruction booklet looks like that system's real manual.** The box art now fills the booklet edge to edge (cropped, never squashed) instead of sitting in a plain off-white frame. Nintendo, Sega and other systems get a strip along the foot in their retail colours, with the system's wordmark and "INSTRUCTION BOOKLET", and the same colours as the case spine. PlayStation, PS2 and PSP booklets simply reprint the cover, as their manuals did.
-
-## [0.8.0] - 2026-11-08
-
-### Added
-- **Page turn layout.** Cases swing across a spine like the pages of a book: the games you have passed lie open on the left showing their back covers, and the selected one stands open on the right.
-- **Media carousel layout.** The games themselves instead of their cases: every disc, mini disc, UMD and cartridge on a carousel, with the selected disc spinning.
-- **A new 20-second demo** and new README screenshots, including the two new layouts.
-- **Android:** an updated experimental build with everything in this release (see the `android-v0.8.0-experimental` pre-release).
-
-### Changed
-- **The library opens straight away.** PyroCade shows the library it found last time and rescans your folders in the background, redrawing the shelf only if something changed. On a 7,691-game library on a hard drive the shelf appeared after about 0.8 s instead of 2.6 s.
-- **Scans are about four times faster** (about 0.6 s instead of 2.3 s on the same library). Folders are read in parallel and listed only once per scan, and the file sizes used to choose between copies of a game (US and EU releases, for example) are remembered between scans. **Save & rescan** in Settings still reads them all again.
-- **Switching consoles is about twice as fast** (about 75 ms instead of 145 ms, and 245 ms instead of 610 ms for the first switch to All games). Generated back covers for games without a scan are drawn in the background, one per frame, and filled in as they are ready; the case view draws its back cover at once.
-- **A cartridge comes up out of its cardboard box.** In the case view it rises straight out of the open top and glides forward in one smooth, untilted motion to rest above the box, in front of the flap, so the whole label shows.
-- Super Famicom boxes keep their real proportions, the Bookshelf leaves room beside the pulled-out case for its disc, and hinged cases fold open around their spine.
-- **Spinner rack and Colour cards are replaced by Page turn and Media carousel.** If one of them was your layout, PyroCade opens in its replacement.
-
-### Fixed
-- **Cartridge labels no longer go blank** when a cartridge is seen at an angle. The label sat a tenth of a pixel above the shell, close enough that the plain shell was sometimes drawn over it.
-- **A turning case no longer shows its disc or cartridge on its back** in Page turn.
-- The cartridge no longer passes through the open flap of a small cardboard box (Game Boy Advance) as it comes out.
-
-## [0.7.0] - 2026-11-08
-
-### Added
-- Optional Leia SR stereo on Windows. Press **F9** for 3D and **Shift+F9** for depth, popout, convergence and stereo FPS. Stereo needs a compatible display and the Leia SR runtime.
-- Shelf-edge previews, drag-to-reorder, editable game versions and media models, custom screenshots, and a Recomp shelf for standalone Windows games.
-- **Report a problem or send feedback from Settings.** Describe an error or suggestion, optionally include the app version and basic device details, then review and submit a prefilled public GitHub issue. **Copy report** works offline. The repository also has problem and feedback templates.
-- **Two more places to find a missing front cover: the Super Mario Wiki and the Internet Archive.** When LaunchBox, ScreenScraper, GameTDB and Libretro have no cover, PyroCade now asks the [Super Mario Wiki](https://www.mariowiki.com/) for Mario, Yoshi, Wario, Donkey Kong and Smash Bros. games, then the Internet Archive's [box scan collection](https://archive.org/details/softwareboxart). They are only ever a last resort, so a game that already gets a cover keeps the same one. A wrong cover is worse than none, so a picture is used only when it is filed under the game's own system, named as the front of the box and shaped like one (collectors often scan a box flat, flaps and all, and call it the front): full wraps, cartridge scans, store displays, promos and fan-made covers are skipped, and so are demos, prototypes and ROM hacks, which share a name with the original game. Both sites are run by volunteers: PyroCade asks each at most once a second, reads the wiki's raw page text (its robots.txt allows that, not its API), and keeps the answers for a month. GamesDatabase.org was considered too, but its terms forbid automated queries.
-
-### Changed
-- Charcoal interface, brighter accents, a transparent top bar and flatter, centred keyboard and controller prompts.
-- Hiding game details makes more room for the shelf. Cartridges rise higher so their labels are visible.
-- Large libraries skip unnecessary file-size checks, reuse neighbouring shelf previews and do less rendering work in Bookshelf and Spinner rack.
-- **Bookshelf spines are twice the size and readable.** The layout took its size from the same scale as every other layout, which stops growing at 1.16, so on a 1920×1080 screen the whole shelf sat 600px wide in the middle with spine titles 8px tall. It now sizes the shelf from the room it has: standing cases fill about half the stage height, titles come out around 16px on that screen (24px on 2560×1440), and the case you pulled out grows with them while staying clear of the header and the game details. Every case also stands on the same line now; the cardboard boxes used to sit slightly lower than the rest.
-- **The cartridges look like moulded plastic rather than modelling clay.** Every shell now catches a sheen off the top left, bounces a little light back from the bottom right, darkens where the face turns into its own walls and ends on a crisp lit edge, instead of sitting under one flat wash. Ribs, raised panels and the label recess all got the same lift.
-- **The Nintendo 64 cartridge has lost the two raised rectangles** either side of its label. A real cartridge is smooth there; the moulding seams that are genuinely on the face are unchanged.
-
-### Fixed
-- **The cartridge no longer cuts through the front of a cardboard box.** Opening a Super Nintendo, Nintendo 64 or Atari 2600 case drew the bottom of the cartridge across the cover art and left it there once the box was open. Those cartridges are nearly as deep as the box itself, so one lifted 8px towards you came out through the front of it. The cartridge now rises behind the box, which hides the part still inside, and always stops clear of the top edge.
-
-## [0.6.0] - 2026-11-06
-
-Entries marked *(u/RiceDesperate5724)* were asked for by [u/RiceDesperate5724](https://www.reddit.com/user/RiceDesperate5724/) on Reddit, who also built their own version of four of them.
-
-### Added
-- **Hide a game:** **⊘ Hide** next to Favourite, the **Delete** key, or right-click → **Hide from the library** takes a game off every shelf. Nothing in your ROM folder is renamed, moved or deleted — the choice lives in PyroCade's own library file. **Show → Hidden games** lists everything you hid, with **⊙ Unhide** to bring one back. *(u/RiceDesperate5724)*
-- **Right-click a game on the shelf** for Play, Open case, Manual, Favourite, Rename…, Hide, Emulator… and Artwork, all acting on the game you pointed at. Arrow keys and a controller work in the menu too. *(u/RiceDesperate5724)*
-- **Rename a game:** right-click → **Rename…** sets the title PyroCade shows. The file on disk keeps its name, the shelf re-sorts straight away, and **Use the file name** (or typing the scanned title back) clears the override. *(u/RiceDesperate5724)*
-- **Browsing no longer stops at the end of the shelf.** On a system's shelf, pressing right past the last game carries on into the next system that has games, and left past the first goes back into the previous one. All games, Favourites and Recently played are one list already, so they wrap round to the other end. *(u/RiceDesperate5724)*
-- **Settings → Disable 3D models** and **Disable animations**, for computers that struggle with the shelf. Flat covers skip building the case and media models altogether (a shelf item goes from about 680 nodes to 16), and turning animations off stops the ambient background, the idle screensaver and every transition. Both apply at once and save themselves.
-- **Fullscreen is remembered and has a switch:** **Settings → Fullscreen**, as well as **F11**. **Ctrl/Cmd+Shift+F** does the same, for keyboards and desktops where F11 belongs to the window manager. `--fullscreen` and `--windowed` set it from a shortcut or from Steam's launch options. *(u/RiceDesperate5724)*
-
-### Changed
-- **Nintendo Switch updates and DLC join their game.** Files are grouped by the title ID in their name (`Game [0100ABCD12345000][v0].nsp`): an update ends in `…800` and a DLC pack in `…1000` and up, so they all belong to the game ending in `…000` instead of each becoming a game of its own. The game itself is what the library lists and launches. Files without a title ID are grouped by name, as before. *(u/RiceDesperate5724)*
-
-### Fixed
-- **The cartridge no longer cuts through its own case.** Part way through the slide out from behind the case, pieces of the cartridge were drawn on top of the cover art: CSS 3D sorts flat planes rather than solids, so a cartridge sharing space with the box is not reliably hidden inside it. The media now waits and travels entirely behind the case, one cartridge depth clear of its back face.
-- **The cartridge no longer covers the next game.** A wide cartridge (Game Boy Advance, SNES, Nintendo 64) or a 12 cm disc slid so far out from behind its case that it was drawn over its neighbour on the shelf. It now stops just clear of the case, whatever its size.
-- **Side ribs no longer double the cartridge's outline.** SNES and Game Boy ribs reached the edge of the shell and hid its side wall in slivers, which read as a second, ragged silhouette. Raised moulding is also kept inside the bevelled face, so a panel written flush with the edge can no longer hang over it.
-- **Square covers fill the label instead of being letterboxed.** A Switch 2 eShop packshot has a white bar down each side; those bars were measured only for Switch 2 cases and were left on every cartridge label. They are now measured for any cover on any system, and a cover without them is untouched.
-
 ## [0.5.0] - 2026-11-06
 
 ### Added
@@ -227,11 +151,6 @@ Entries marked *(u/RiceDesperate5724)* were asked for by [u/RiceDesperate5724](h
 - Launching finds the ROM by game ID, keeps `$` in paths, and only minimizes once the emulator has started.
 - Settings are saved atomically, and a damaged settings file is backed up instead of overwritten.
 
-[0.8.2]: https://github.com/Pyrodrifter/PyroCade/compare/v0.8.1...v0.8.2
-[0.8.1]: https://github.com/Pyrodrifter/PyroCade/compare/v0.8.0...v0.8.1
-[0.8.0]: https://github.com/Pyrodrifter/PyroCade/compare/v0.7.0...v0.8.0
-[0.7.0]: https://github.com/Pyrodrifter/PyroCade/compare/v0.6.0...v0.7.0
-[0.6.0]: https://github.com/Pyrodrifter/PyroCade/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/Pyrodrifter/PyroCade/compare/v0.4.4...v0.5.0
 [0.4.4]: https://github.com/Pyrodrifter/PyroCade/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/Pyrodrifter/PyroCade/compare/v0.4.2...v0.4.3

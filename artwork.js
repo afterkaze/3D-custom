@@ -37,7 +37,7 @@ function imageWidth(b) {
 function fileWidth(file) {
   try {const fd=fs.openSync(file,'r');try{const b=Buffer.alloc(65536);const n=fs.readSync(fd,b,0,b.length,0);return imageWidth(b.subarray(0,n))}finally{fs.closeSync(fd)}}catch{return 0}
 }
-function createArtworkService({dataDir,getSystems,getGames,normalize,fetchImpl=fetch,onProgress=()=>{},source='https://thumbnails.libretro.com',decodeImage,launchbox=null,screenscraper=null,mariowiki=null,internetArchive=null,cartridgeLabel=null,encodeImage=null,
+function createArtworkService({dataDir,getSystems,getGames,normalize,fetchImpl=fetch,onProgress=()=>{},onSource=()=>{},source='https://thumbnails.libretro.com',decodeImage,launchbox=null,screenscraper=null,cartridgeLabel=null,encodeImage=null,
   switchDatabase='https://www.gametdb.com/switchtdb.txt?LANG=EN',switchImages='https://art.gametdb.com/switch'}) {
   const indexes=new Map(), unavailable=new Set(), inflight=new Map();
   let switchIndex;
@@ -89,6 +89,7 @@ function createArtworkService({dataDir,getSystems,getGames,normalize,fetchImpl=f
       if(decodeImage && !(bytes.length>=8&&bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]))))bytes=await decodeImage(bytes);
       if(bytes.length<24 || !bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])))throw new Error('Artwork server did not return a PNG image');
       if(!bytes.readUInt32BE(16)||!bytes.readUInt32BE(20)||bytes.readUInt32BE(16)>16384||bytes.readUInt32BE(20)>16384)throw new Error('Invalid artwork dimensions');
+      bytes.sourceUrl=url; // remembered so the game's Sources list can show exactly where the picture came from
       return bytes;
     },signal);
   }
@@ -147,23 +148,17 @@ function createArtworkService({dataDir,getSystems,getGames,normalize,fetchImpl=f
     const isSwitch=sys.artworkProvider==='gametdb-switch';
     if(isSwitch&&type==='disc')steps.push(['gametdb-switch',gametdb]); // GameTDB has flat cartridge labels; keep them first
     // Photos of whole cartridges are cut down to their sticker; systems without a measured label are skipped.
-    const photo=bytes=>bytes&&type==='disc'&&sys.media==='cart' ? (cartridgeLabel?.(bytes,sys.id)||null) : bytes;
+    const photo=bytes=>{if(!(bytes&&type==='disc'&&sys.media==='cart'))return bytes;const label=cartridgeLabel?.(bytes,sys.id)||null;if(label)label.sourceUrl=bytes.sourceUrl;return label};
     // Automatic lookups never start the large LaunchBox download; a download from the Artwork page does.
-    if(launchbox&&(!background||launchbox.available()))steps.push(['launchbox',async()=>photo(await firstImage(await launchbox.find(sys.id,titleKeys(game),type,{refresh:!background&&refreshOnce('launchbox'),offline:background}),signal))]);
+    if(launchbox&&(!background||launchbox.available()))steps.push(['launchbox',async()=>photo(await firstImage(await launchbox.find(sys.id,titleKeys(game),type,{refresh:!background&&refreshOnce('launchbox'),offline:background,game}),signal))]);
     if(screenscraper?.configured())steps.push(['screenscraper',async()=>photo(await firstImage(await screenscraper.find(game,type,{signal,refresh:refreshOnce('screenscraper')}),signal))]);
     if(isSwitch&&type!=='disc')steps.push(['gametdb-switch',gametdb]);
     if(!hqOnly&&sys.libretro&&TYPES[type].remote)steps.push([`${sys.id}/${type}`,()=>libretroImage(sys,type,game,{signal,retryMissing,refreshed,failures})]);
-    // Last resorts for front covers the sources above do not have. Never used to replace a cover
-    // already on disk (hqOnly): their scans can be another region's box.
-    if(type==='front'&&!hqOnly) {
-      if(mariowiki?.covers(sys.id))steps.push(['mariowiki',async()=>firstImage(await mariowiki.find(game,sys.id,{signal,refresh:refreshOnce('mariowiki')}),signal)]);
-      if(internetArchive?.covers(sys.id))steps.push(['internet-archive',async()=>firstImage(await internetArchive.find(game,sys.id,titleKeys(game),{signal,refresh:refreshOnce('internet-archive')}),signal)]);
-    }
     const errors=[];let asked=0;
     for(const [key,step] of steps) {
       if(failures.has(key)){errors.push(failures.get(key));continue}
       try {asked++;const bytes=await step();if(bytes)return bytes}
-      catch(e){if(signal?.aborted)throw e;asked--;errors.push(e.message);if(['launchbox','screenscraper','mariowiki','internet-archive'].includes(key))failures.set(key,e.message)}
+      catch(e){if(signal?.aborted)throw e;asked--;errors.push(e.message);if(key==='launchbox'||key==='screenscraper')failures.set(key,e.message)}
     }
     if(!asked&&errors.length)throw new Error(errors[0]);
     return null;
@@ -287,6 +282,7 @@ function createArtworkService({dataDir,getSystems,getGames,normalize,fetchImpl=f
         const tmp=`${target}.${randomUUID()}.tmp`;
         try {await fs.promises.writeFile(tmp,saved.bytes);await fs.promises.rename(tmp,target)}catch(e){await fs.promises.unlink(tmp).catch(()=>{});throw e}
         if(target!==kept)await fs.promises.unlink(kept).catch(()=>{});
+        onSource(game,type,bytes.sourceUrl);
         // A new query string makes the window load the new picture instead of its cached copy.
         return {downloaded:1,upgraded:1,media:{[type]:`${pathToFileURL(target).href}?v=${Date.now()}`}};
       })();
@@ -314,7 +310,7 @@ function createArtworkService({dataDir,getSystems,getGames,normalize,fetchImpl=f
         try {await handle.writeFile(saved.bytes)}catch(e){await handle.close();handle=null;await fs.promises.unlink(file).catch(()=>{});throw e}
       } catch(e) {if(e.code==='EEXIST')return {existing:1,media:{[type]:pathToFileURL(file).href}};throw e}
       finally {await handle?.close()}
-      unavailable.delete(key);
+      unavailable.delete(key);onSource(game,type,bytes.sourceUrl);
       if(shell)await fs.promises.writeFile(file.replace(/\.[^.\\/]+$/,'.json'),JSON.stringify({shell})).catch(()=>{});
       return {downloaded:1,media:{[type]:pathToFileURL(file).href},...(shell?{shell}:{})};
     })();
@@ -324,7 +320,7 @@ function createArtworkService({dataDir,getSystems,getGames,normalize,fetchImpl=f
   async function downloadGame(game,types,options={}) {
     const result={gameId:game.id,title:game.title,media:{},downloaded:0,upgraded:0,existing:0,missing:0,errors:[],unsupported:false};
     const sys=getSystems().find(s=>s.id===game.system);
-    const supported=sys&&(sys.libretro||sys.artworkProvider==='gametdb-switch'||launchbox?.platforms[sys.id]||(screenscraper?.configured()&&screenscraper.systems[sys.id]));
+    const supported=sys&&(sys.libretro||sys.artworkProvider==='gametdb-switch'||launchbox?.platforms[sys.id]||launchbox?.supports?.(game)||(screenscraper?.configured()&&screenscraper.systems[sys.id]));
     if(!supported){result.unsupported=true;return result}
     const outcomes=await Promise.all(types.map(async type=>{
       try {return await one(game,type,options)}catch(e){if(options.signal?.aborted)throw e;return {error:e.message}}
@@ -387,13 +383,11 @@ function createArtworkService({dataDir,getSystems,getGames,normalize,fetchImpl=f
     const sys=getSystems().find(s=>s.id===game.system);
     if(!sys||!TYPES[type])return [];
     const urls=[];
-    if(launchbox)try{urls.push(...await launchbox.find(sys.id,titleKeys(game),type))}catch{}
+    if(launchbox)try{urls.push(...await launchbox.find(sys.id,titleKeys(game),type,{game}))}catch{}
     if(screenscraper?.configured())try{urls.push(...await screenscraper.find(game,type,{signal}))}catch{}
-    if(type==='front'&&mariowiki?.covers(sys.id))try{urls.push(...await mariowiki.find(game,sys.id,{signal}))}catch{}
-    if(type==='front'&&internetArchive?.covers(sys.id))try{urls.push(...await internetArchive.find(game,sys.id,titleKeys(game),{signal}))}catch{}
     const found=[];
     for(const url of [...new Set(urls)].slice(0,8)) {
-      try {let bytes=await request(url,'image',signal);if(bytes&&type==='disc'&&sys.media==='cart')bytes=cartridgeLabel?.(bytes,sys.id)||null;if(bytes)found.push(bytes)}
+      try {let bytes=await request(url,'image',signal);if(bytes&&type==='disc'&&sys.media==='cart'){const label=cartridgeLabel?.(bytes,sys.id)||null;if(label)label.sourceUrl=url;bytes=label}if(bytes)found.push(bytes)}
       catch(e){if(signal?.aborted)throw e}
     }
     return found;
@@ -408,7 +402,7 @@ function createArtworkService({dataDir,getSystems,getGames,normalize,fetchImpl=f
     await fs.promises.writeFile(tmp,saved.bytes);await fs.promises.rename(tmp,target);
     for(const ext of IMAGE_EXTS){const other=path.join(dir,base+ext);if(other!==target)await fs.promises.unlink(other).catch(()=>{})}
     unavailable.delete(`${sys.id}/${base}/${type}`);
-    const url=`${pathToFileURL(target).href}?v=${Date.now()}`;game.media[type]=url;
+    const url=`${pathToFileURL(target).href}?v=${Date.now()}`;game.media[type]=url;onSource(game,type,bytes.sourceUrl);
     return {gameId:game.id,media:{[type]:url},replace:true};
   }
   // PyroCade 0.3.0 saved full-size scans as PNG (often 10-15 MB each). Re-encode those in place.
@@ -437,6 +431,8 @@ function createArtworkService({dataDir,getSystems,getGames,normalize,fetchImpl=f
   }
   // Lets a source show what it is doing (e.g. preparing the LaunchBox database) in the progress panel.
   function note(message) {if(job?.status==='running'){job.lastTitle=message;emit(null,true)}}
-  return {fetchArt,start,cancel,status:snapshot,downloadGame,download,note,compact,titleKeys,candidates,choose};
+  // One image from a link someone typed, checked and converted exactly like a download.
+  const fetchImage=url=>request(url,'image');
+  return {fetchArt,start,cancel,status:snapshot,downloadGame,download,note,compact,titleKeys,candidates,choose,fetchImage};
 }
 module.exports={createArtworkService,TYPES};

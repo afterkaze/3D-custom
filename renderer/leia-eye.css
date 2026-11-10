@@ -9,3 +9,13 @@
 html[data-leia-rendering='true'] #stage .item,html[data-leia-rendering='true'] #caseRig,html[data-leia-rendering='true'] #bg{visibility:visible;}
 html[data-leia-rendering='true'] #stage .item.far{visibility:hidden;}
 html[data-leia-rendering='true'] #stage .item::after{display:none;}
+
+/* Stereo cursor fades out after 5 s without movement (timer lives in the launcher window). */
+.leia-cursor{transition:opacity .35s ease;}
+
+/* 3D on: text glows white so it stays bright and legible through the lenticular weave. */
+html{--muted:#d9deea!important;}
+body,body *:not(#stage *,#caseView *,.leia-cursor){text-shadow:0 0 .1em #ffffffa6,0 0 .5em #ffffff4d!important;}
+#gTitle.has-logo{text-shadow:none!important;}
+#info :is(h1,#gDesc,.details-subline),header :is(button,a,span),.shelf-heading,.hints,.prompt-hint{color:#fff;}
+html body :is(#stage,#caseView){text-shadow:none!important;}

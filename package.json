@@ -1,6 +1,6 @@
 {
   "name": "pyrocade",
-  "version": "0.8.2",
+  "version": "0.5.24",
   "description": "3D carousel front-end for emulators with built-in emulator downloader/updater",
   "license": "MIT",
   "main": "main.js",
@@ -14,8 +14,6 @@
     "artwork:check": "node scripts/check-artwork.cjs && electron scripts/check-artwork-ui.cjs",
     "eshop:check": "electron scripts/check-eshop.cjs",
     "ui:check": "electron scripts/check-library-ui.cjs",
-    "feedback:check": "node scripts/check-feedback.cjs && electron scripts/check-feedback-ui.cjs",
-    "perf:check": "electron scripts/check-performance.cjs",
     "brand:build": "electron scripts/build-brand.cjs",
     "brand:check": "electron scripts/check-brand.cjs",
     "demo:record": "electron scripts/record-reddit-demo.cjs",
@@ -50,10 +48,6 @@
       "artwork.js",
       "launchbox.js",
       "screenscraper.js",
-      "mariowiki.js",
-      "internet-archive.js",
-      "web-source.js",
-      "feedback.js",
       "emulators.json",
       "package.json",
       "LICENSE",
@@ -71,13 +65,7 @@
           ]
         }
       ],
-      "icon": "renderer/assets/brand/pyrocade.ico",
-      "extraResources": [
-        {
-          "from": "native/bin/PyroCadeLeia.exe",
-          "to": "leia/PyroCadeLeia.exe"
-        }
-      ]
+      "icon": "renderer/assets/brand/pyrocade.ico"
     },
     "nsis": {
       "oneClick": false,
@@ -150,7 +138,13 @@
     },
     "pacman": {
       "artifactName": "pyrocade-${version}-x86_64.pkg.tar.zst"
-    }
+    },
+    "extraResources": [
+      {
+        "from": "native/bin/PyroCadeLeia.exe",
+        "to": "leia/PyroCadeLeia.exe"
+      }
+    ]
   },
   "homepage": "https://github.com/Pyrodrifter/PyroCade"
 }

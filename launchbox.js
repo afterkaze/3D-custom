@@ -109,7 +109,12 @@ async function buildIndex(zipPath, normalize) {
 }
 
 const slug = platform => platform.toLowerCase().replace(/[^a-z0-9]+/g, '-');
-function createLaunchBox({dataDir, normalize, download, onStatus=()=>{},
+// lookupFor(game) may return {id} (a game pinned to one LaunchBox entry) or {sysIds, keys} (systems and title
+// keys to search instead of the game's own), e.g. for Recomp ports of console games.
+const pageUrl = id => `https://gamesdb.launchbox-app.com/games/details/${encodeURIComponent(id)}`;
+// "https://gamesdb.launchbox-app.com/games/details/12345-some-name", "…/games/images/12345" or "12345".
+const parseGameId = text => { const s = String(text || '').trim(); const m = s.match(/^(\d{1,9})$/) || s.match(/^https?:\/\/gamesdb\.launchbox-app\.com\/games\/(?:details|images|dbid)\/(\d{1,9})(?:[-/?#].*)?$/i); return m ? m[1] : null; };
+function createLaunchBox({dataDir, normalize, download, onStatus=()=>{}, lookupFor=()=>null,
   metadataUrl='https://gamesdb.launchbox-app.com/Metadata.zip', imageUrl='https://images.launchbox-app.com'}) {
   const dir = path.join(dataDir, 'media', '_index'), indexFile = path.join(dir, 'launchbox-index.json'), metaDir = path.join(dir, 'launchbox-meta');
   let pending = null;const metaCache = new Map();
@@ -149,18 +154,50 @@ function createLaunchBox({dataDir, normalize, download, onStatus=()=>{},
     pending = promise;promise.catch(() => { if (pending === promise) pending = null; });
     return promise;
   }
+  const idsFor = (index, platform, keys) => { const names = index.names[platform] || {}; return [...new Set(keys.filter(Boolean).flatMap(k => Object.hasOwn(names, k) && Array.isArray(names[k]) ? names[k] : []))]; };
+  async function metaFor(platform) {
+    if (!metaCache.has(platform)) {
+      let byId = {};try { byId = JSON.parse(await fs.promises.readFile(path.join(metaDir, slug(platform) + '.json'), 'utf8')); } catch {}
+      metaCache.set(platform, byId);
+    }
+    return metaCache.get(platform);
+  }
+  // The indexed platform a LaunchBox id belongs to (null when that game's platform is not indexed).
+  async function platformOfId(index, id) {
+    for (const [platform, byId] of Object.entries(index.images)) if (Object.hasOwn(byId, id)) return platform;
+    for (const platform of new Set(Object.values(PLATFORMS))) if (Object.hasOwn(await metaFor(platform), id)) return platform;
+    return null;
+  }
+  // Candidate [platform, id] pairs for a game, best first: its pinned entry, or a title search.
+  async function candidatesFor(index, sysId, keys, game) {
+    const lookup = game ? lookupFor(game) : null;
+    if (lookup?.id) { const platform = await platformOfId(index, lookup.id); return platform ? [[platform, lookup.id]] : []; }
+    const sysIds = lookup?.sysIds || [sysId], allKeys = [...new Set([...(lookup?.keys || []), ...keys])];
+    const out = [];
+    for (const id of sysIds) { const platform = PLATFORMS[id]; if (platform) for (const gameId of idsFor(index, platform, allKeys)) out.push([platform, gameId]); }
+    return out;
+  }
+  const supports = game => !!(PLATFORMS[game.system] || lookupFor(game));
   // Image URLs for one game and artwork kind, best first. Empty when the game or system is unknown.
-  async function find(sysId, keys, kind, {refresh=false, offline=false}={}) {
-    const platform = PLATFORMS[sysId], wantedKind = kind === 'frontHQ' ? 'front' : kind;
-    if (!platform || !IMAGE_TYPES[kind]) return [];
+  async function find(sysId, keys, kind, {refresh=false, offline=false, game=null}={}) {
+    const wantedKind = kind === 'frontHQ' ? 'front' : kind;
+    if (!IMAGE_TYPES[kind] || !(PLATFORMS[sysId] || game && supports(game))) return [];
     const index = await load(refresh, {offline});
-    const names = index.names[platform] || {}, own = k => Object.hasOwn(names, k) && Array.isArray(names[k]) ? names[k] : [];
-    const ids = [...new Set(keys.filter(Boolean).flatMap(own))];
-    for (const id of ids) {
+    for (const [platform, id] of await candidatesFor(index, sysId, keys, game)) {
       const byId = index.images[platform] || {}, files = Object.hasOwn(byId, id) ? byId[id][wantedKind] : null;
       if (files?.length) return files.map(f => `${imageUrl}/${encodeURIComponent(f)}`);
     }
     return [];
+  }
+  // The LaunchBox entry a game's details and artwork come from: {id, platform, page, pinned} or null.
+  async function match(game, keys) {
+    if (!available()) return null;
+    const index = await load(false, {offline:true}), lookup = lookupFor(game);
+    const found = await candidatesFor(index, game.system, keys, game);
+    // Prefer an entry that has artwork when a title matches several.
+    const [platform, id] = found.find(([p, i]) => index.images[p]?.[i]) || found[0] || [];
+    if (!id) return lookup?.id ? {id: lookup.id, platform: null, page: pageUrl(lookup.id), pinned: true, missing: true} : null;
+    return {id, platform, page: pageUrl(id), pinned: !!lookup?.id};
   }
   // True once the database has been prepared, so lookups need no download.
   // Reads only the start of the index (it is ~18 MB) and remembers the answer until the file changes.
@@ -177,21 +214,13 @@ function createLaunchBox({dataDir, normalize, download, onStatus=()=>{},
     } catch { return false; }
   };
   // Description, year, developer, publisher, genre and players for one game, or null.
-  async function details(sysId, keys) {
-    const platform = PLATFORMS[sysId];if(!platform)return null;
+  async function details(sysId, keys, game = null) {
+    if (!(PLATFORMS[sysId] || game && supports(game))) return null;
     const index = await load(false, {offline:true});
-    const names = index.names[platform] || {};
-    const ids = [...new Set(keys.filter(Boolean).flatMap(k => Object.hasOwn(names, k) && Array.isArray(names[k]) ? names[k] : []))];
-    if (!ids.length) return null;
-    if (!metaCache.has(platform)) {
-      let byId = {};try { byId = JSON.parse(await fs.promises.readFile(path.join(metaDir, slug(platform) + '.json'), 'utf8')); } catch {}
-      metaCache.set(platform, byId);
-    }
-    const byId = metaCache.get(platform);
-    for (const id of ids) if (Object.hasOwn(byId, id)) return byId[id];
+    for (const [platform, id] of await candidatesFor(index, sysId, keys, game)) { const byId = await metaFor(platform); if (Object.hasOwn(byId, id)) return byId[id]; }
     return null;
   }
-  return {find, load, details, available, platforms:PLATFORMS};
+  return {find, load, details, match, supports, available, platforms:PLATFORMS};
 }
 
-module.exports = {createLaunchBox, buildIndex, zipEntryStream, PLATFORMS};
+module.exports = {createLaunchBox, buildIndex, zipEntryStream, PLATFORMS, parseGameId, pageUrl};

@@ -1,0 +1,123 @@
+﻿/* Game details panel (I / drag grip).
+   Priority: title, then version, then one line of facts that ends in an ellipsis, then a description that
+   scrolls. Every size is derived from the space the panel really has (container query units), so the
+   text scales with the grip instead of overflowing it. */
+
+html[data-details-flow='true'] #info .info-text {
+  container: details / size;
+  justify-content: flex-end;
+  gap: 0;
+}
+
+html[data-details-flow='true'] #info .eyebrow {
+  flex: none;
+  font-size: clamp(9px, 5.2cqh, 12px);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+html[data-details-flow='true'] #info .info-text #gTitle {
+  flex: none;
+  font-size: clamp(17px, min(17cqh, 6.2cqi), 54px);
+  line-height: 1.08;
+  margin: .14em 0 .12em;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
+}
+@container details (max-height: 200px) {
+  html[data-details-flow='true'] #info .info-text #gTitle { -webkit-line-clamp: 1; }
+}
+
+.details-subline {
+  display: flex;
+  align-items: center;
+  gap: .7em;
+  min-width: 0;
+  color: var(--muted);
+}
+html[data-details-flow='true'] #info .details-subline {
+  flex: none;
+  font-size: clamp(11px, 6cqh, 18px);
+  margin: .1em 0 .35em;
+}
+.version-chip {
+  flex: none;
+  max-width: 48%;
+  padding: .14em .62em;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: #fff;
+  font-size: .86em;
+  font-weight: 650;
+  letter-spacing: .01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+.version-chip[hidden] { display: none; }
+html #info .details-subline .meta {
+  display: block;
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: inherit;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+html #info .details-subline .meta span { display: inline; }
+html #info .details-subline .meta span + span::before { margin: 0 .55em 0 .5em; }
+/* The facts line stays visible at the smallest grip size; only the eyebrow steps aside. */
+html[data-details-tiny='true'][data-details-flow='true'] #info .details-subline .meta { display: block !important; }
+
+html[data-details-flow='true'] #info #gDesc {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: block;
+  -webkit-line-clamp: unset;
+  max-height: none;
+  margin: .2em 0 .45em;
+  padding-right: .5em;
+  font-size: clamp(12px, 6.3cqh, 19px);
+  line-height: 1.45;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scroll-behavior: smooth;
+  scrollbar-width: thin;
+  scrollbar-color: #ffffff38 transparent;
+  /* Soft edge where the text continues below. */
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 1.3em), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 1.3em), transparent);
+}
+html[data-details-flow='true'] #info #gDesc.at-end { -webkit-mask-image: none; mask-image: none; }
+/* Resting view: whole lines only, ending in "…" after the last word that fits (line count set by app.js). */
+html[data-details-flow='true'] #info #gDesc.clamped {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+html[data-details-flow='true'] #info #gDesc.hidden { display: none; }
+
+html[data-details-flow='true'] #info .actions { scrollbar-width: none; }
+html[data-details-flow='true'] #info .actions::-webkit-scrollbar { display: none; }
+/* Buttons that do not fit fade out at the edge instead of being cut mid-word (the row still scrolls). */
+html[data-details-flow='true'] #info .actions.overflowing {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 56px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 56px), transparent);
+}
+
+/* Smooth size changes between I-modes (not while dragging, where text follows the grip directly). */
+html:not(.details-dragging) #info :is(.eyebrow, #gTitle, .details-subline, #gDesc) {
+  transition: font-size .3s cubic-bezier(.2, .7, .2, 1), opacity .3s ease;
+}
+#info.swap .info-text { animation: details-rise .42s cubic-bezier(.2, .8, .2, 1); }
+@keyframes details-rise { from { opacity: 0; transform: translateY(8px); } }

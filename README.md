@@ -1,44 +1,54 @@
+# 3D-custom
+
+**Version 0.5.24.** A Windows preview fork of [Pyrodrifter's PyroCade](https://github.com/Pyrodrifter/PyroCade), based on 0.5.0. The original project and its MIT license are credited below.
+
+- Continuous console carousel, edge previews, and per-console drag ordering.
+- Persistent game hiding, expandable system game lists, and console visibility controls.
+- Editable titles, version labels, and physical media models.
+- Right-click artwork, screenshot, and game-folder actions.
+- Recomp library for standalone Windows games with per-game executable selection.
+- Resizable game details, independent overlay controls, and fullscreen fixes.
+- Leia SR stereo carousel and case inspection on Windows. F9 toggles 3D. Shift+F9 opens depth controls and stereo FPS.
+- 3D display outputs besides the Leia SR panel: half/full side-by-side, half/full over-under and row interlaced, for 3D TVs, projectors and passive 3D monitors.
+- Fixed folder and visibility saving, with per-folder rescan results.
+
+The [native build instructions](native/README.md) describe the Leia SR dependency. The installed Leia SR runtime is required for glasses-free 3D.
+
+---
+
 # PyroCade
 
-![PyroCade](renderer/assets/brand/pyrocade-banner.png)
+![PyroCade: your collection, a little more alive.](renderer/assets/brand/pyrocade-banner.png)
 
-An emulator launcher for Windows, macOS and Linux. Browse your library as 3D game cases with spines, cartridges, discs and manuals. Install or link emulators from the same app.
+An emulator front end for Windows, macOS and Linux that shows your games as real 3D boxes, with discs and cartridges, retail-style spines and manuals. It also installs and updates your emulators for you.
 
-![Kirby Air Ride selected in the GameCube carousel, with neighbouring cases and a gameplay preview](docs/media/screen-carousel.jpg)
+![The carousel: Jak II with its disc, clear logo, details and screenshot](docs/media/screen-carousel.jpg)
 
-The 20-second demo moves from GameCube cases and discs to PlayStation jewel cases, then opens the **Golden Sun** box to reveal its Game Boy Advance cartridge. [Download the demo (MP4)](docs/media/pyrocade-demo.mp4?raw=true)
-
-| Bookshelf | Page turn |
+| Bookshelf | Spinner rack |
 | --- | --- |
-| ![Luigi’s Mansion pulled out from a row of GameCube spines](docs/media/screen-bookshelf.jpg) | ![Tekken 3 selected in the PlayStation Page turn layout](docs/media/screen-page-turn.jpg) |
-| **Media carousel** | **Open the case** |
-| ![F-Zero GX and other GameCube mini discs in the Media carousel](docs/media/screen-media.jpg) | ![The open F-Zero GX case with its GameCube mini disc](docs/media/screen-case.jpg) |
-| **Manuals** | **Artwork** |
-| ![The Kirby Air Ride instruction booklet with its PDF manual ready to open](docs/media/screen-manual.jpg) | ![Artwork download options for the GameCube shelf](docs/media/screen-artwork.jpg) |
-| **Emulators** | |
-| ![Emulator catalog with install, link and update controls](docs/media/screen-emulators.jpg) | |
+| ![Switch games standing spine-out side by side](docs/media/screen-bookshelf.jpg) | ![DS games on a rotating store tower](docs/media/screen-spinner.jpg) |
+| **Open the case** | **Read the manual** |
+| ![Animal Crossing opened, with its booklet and disc](docs/media/screen-case.jpg) | ![The Animal Crossing manual in PyroCade's PDF viewer](docs/media/screen-manual.jpg) |
+| **Press Play** | **Emulators** |
+| ![A SNES cartridge pushed half-way into the slot](docs/media/screen-launch.jpg) | ![Install, update, or point any emulator at a fork](docs/media/screen-emulators.jpg) |
 
 ## Features
-- **Six library layouts.** Choose Carousel, Bookshelf, Vertical stack, Flipbook, Page turn or Media carousel in **View & theme**. Page turn swings cases across a spine. Media carousel shows each game's disc or cartridge instead of its case. Pick an accent colour and background there too.
-- **Physical games.**
+- **Six ways to browse:** Carousel, Bookshelf, Spinner rack, Vertical stack, Flipbook and Colour cards, in five colour themes. Choose them in **View & theme**.
+- **Physical games:**
   - Each system gets its own case, from jewel cases, DVD cases and Switch cases to cardboard boxes.
-  - Discs slide out of the selected case, and cartridges rise above the cover so you can see the label. In the case view, a cartridge comes up out of its cardboard box and settles in front of it.
+  - Discs and cartridges slide out of the selected case.
   - **Cartridges come in their real colours:** taken from a photo of the actual cartridge, or from a list of famous ones (gold Ocarina of Time, the coloured Pokémon cartridges…). You can also pick your own colour per game in **Artwork → Change an image**.
   - Generated spines follow each console's retail design, and real spine scans always win.
-  - Open a case to turn it around, flip it and read the manual. The booklet inside is printed like that system's real manuals, in its retail colours.
-- **Library controls.**
+  - Open a case to turn it around, flip it and read the manual.
+- **Your library, your way:**
   - **Favourites** (press **F**) and **Recently played** get their own shelves.
   - **Play time** and **last played** show with each game.
   - **Sort** by title, year, play time or developer, **show** only multiplayer, unplayed or one genre, or pick a **random** game.
-  - **Hide a game** you don't want on the shelf (**⊘ Hide**, or the **Delete** key) without touching your ROM folder; **Show → Hidden games** brings it back.
-  - Right-click a game to rename it, edit its version or media type, choose artwork, or open its folder.
-  - Browse past a console’s last game to move into the next shelf. Edge previews show which console is next. Drag games within a console to set a custom order.
-  - Press **I** to hide or show game details. The shelf expands when details are hidden. Drag the top edge of the details panel to resize it. Press **O** to toggle the overlay.
   - PyroCade opens on the system and game you had selected.
 - **Multi-disc games** are one game with a disc choice in the case view. **Your own screenshots** from the emulator appear under the open case.
-- **Launch animation.** Play slides the disc or cartridge into a slot before the game starts. Toggle it in **Settings → Library display**. [Castlevania: Aria of Sorrow cartridge launch](docs/media/screen-launch.jpg)
+- **Start animation:** pressing Play spins the disc into a drive, or pushes the cartridge half-way into its slot, then starts the game. You can turn it off in Settings.
 - **Sharp artwork, no account needed:**
-  - Covers, back covers, spines, disc scans, cartridge labels, clear logos, background art and screenshots come from the [LaunchBox Games Database](https://gamesdb.launchbox-app.com/), with GameTDB and Libretro as fallbacks. Front covers none of those have can still come from the [Super Mario Wiki](https://www.mariowiki.com/) (Mario-series games) and the [Internet Archive](https://archive.org/details/softwareboxart)'s box scan collection.
+  - Covers, back covers, spines, disc scans, cartridge labels, clear logos, background art and screenshots come from the [LaunchBox Games Database](https://gamesdb.launchbox-app.com/), with GameTDB and Libretro as fallbacks.
   - Game descriptions, years, developers and genres fill in automatically.
   - If a match is wrong, **Artwork → Change an image → Other versions…** lets you pick another.
   - [ScreenScraper](https://www.screenscraper.fr/) can be added with your own login.
@@ -47,17 +57,13 @@ The 20-second demo moves from GameCube cases and discs to PlayStation jewel case
   - Point **PC Games** at a folder of shortcuts (`.lnk`, Steam `.url`) or game programs (`.exe`), and they start directly, with no emulator.
   - **Settings → Add game…** adds any single game file to any system.
   - **Settings → Add system…** creates your own system with its own colour, case style, file types and emulator.
-  - **Settings → Recomp game…** adds a standalone Windows game. Pick its folder and choose the game’s executable.
 - **Emulators:**
   - Install and update DuckStation, PCSX2, RPCS3, shadPS4, PPSSPP, Cemu, Azahar, melonDS, mGBA, Flycast and xemu from their official GitHub releases.
   - Any emulator can download from a fork instead (**Source…**).
-  - **Add emulator** accepts any GitHub repository, or a program you already have.
+  - **Add your own emulator** accepts any GitHub repository, or a program you already have.
   - **One game, its own emulator:** the **Emulator** button next to Play picks an emulator for just that game, for example a fork made for Ocarina of Time. Other games keep the system's emulator.
-- **Button prompts.** Flat keyboard, mouse, Xbox, PlayStation, Nintendo and generic gamepad icons follow the last input you used. [Full prompt set](renderer/assets/prompts/preview.html)
-- **Ambient mode.** Choose a background and an idle delay for the screensaver.
-- **Performance settings.** Use **Settings → Interface → Use flat covers** or **Disable animations** to reduce rendering work. Both apply immediately.
-- **Fast with large libraries.** PyroCade opens on the library it found last time and rescans your folders in the background, redrawing the shelf only if something changed. Scans read folders in parallel, list each folder once and remember the file sizes used to choose between copies of a game. Generated back covers are drawn in the background, so switching consoles stays quick.
-- **Leia SR on Windows.** Press **F9** to toggle stereo and **Shift+F9** for depth, popout, convergence and stereo FPS. Stereo requires a compatible display, the Leia SR runtime and the native presenter. [Native presenter build instructions](native/README.md)
+- **Controllers:** Xbox, PlayStation, Nintendo and generic pads, with 283 matching button prompts that follow the last input you used.
+- **Ambient mode:** animated backgrounds (XMB ribbon, pixel-art day and night and more), and after a few idle minutes the interface fades into a screensaver.
 
 ## Install
 **Windows:** download **PyroCade-Setup-x.y.z.exe** from the [latest release](https://github.com/Pyrodrifter/PyroCade/releases/latest) and run it. The installer isn't code-signed yet, so Windows SmartScreen may say "Windows protected your PC": click **More info → Run anyway**. Settings, emulators and artwork are kept in `%APPDATA%\PyroCade\data`. PyroCade checks for new releases when it starts and can update itself.
@@ -79,19 +85,14 @@ If macOS says the app is damaged, run `xattr -cr /Applications/PyroCade.app` in 
 
 On Linux, data lives in `~/.config/PyroCade/data` and the emulator downloader installs the official AppImages. The AppImage updates itself; the other packages show an update banner. On Ubuntu 24.04 and newer, prefer the .deb, because Electron AppImages need `--no-sandbox` there.
 
-**Android (experimental):** releases include **PyroCade-x.y.z-android-experimental.apk**, a debug-signed proof of concept of the same library. Allow installs from your browser or file manager, open the APK, then tap **Choose ROM folder…**. Artwork download, manuals and the updater aren't available on Android yet, and launching an emulator hasn't been confirmed on a real phone. [Status and build notes](docs/android.md)
-
 ## Getting started
 1. **Settings:** set a ROM folder for each system (use **+ Add** for more than one), pick its emulator and click **Save & rescan**. For PC games, choose **Run the file itself** as the emulator.
 2. **Emulators:** click **Install** for the emulators you need, or **Use existing .exe…** for ones you already have.
 3. **Artwork:** choose **Entire library** and **Download artwork**. The first download fetches LaunchBox's game list once (about 100 MB, refreshed monthly). Turn on **Replace low-resolution covers** to sharpen art you already have.
 
 **Controls:**
-- **Keyboard:** ← → browse, ↑ ↓ switch system or browse in Vertical stack, **Enter** play, **Space** open the case, **M** manual, **F** favourite, **Delete** hide, **/** search, **Ctrl+K** all systems, **I** show or hide details, **O** toggle the overlay, **F11** (or **Ctrl/Cmd+Shift+F**) fullscreen.
-- **Mouse:** click a game to select it, click it again to open the case, **right-click** for its menu.
+- **Keyboard:** ← → browse, ↑ ↓ switch system, **Enter** play, **Space** open the case, **M** manual, **F** favourite, **/** search, **Ctrl+K** all systems, **F11** fullscreen.
 - **Controllers:** the matching buttons work, LB/RB switch system, Select stars a game and the left stick button picks a random one. While a game is running, hold **Select + Start** for 1.5 seconds to close it.
-
-Use **Settings → Quit application** to close PyroCade, including in fullscreen mode.
 
 ### Supported systems
 Each system's file types and emulator can be changed in **Settings**, and **Add system…** adds any system that isn't listed.
@@ -124,7 +125,7 @@ Each system's file types and emulator can be changed in **Settings**, and **Add 
 | Atari 2600 | `.a26` `.zip` | Link your own |
 | Arcade | `.zip` | Link your own |
 
-Switch and Switch 2 games can also be unpacked game folders (`<game>\base\exefs\main`). Update and DLC files are listed with the game they belong to rather than as games of their own, using the title ID in the file name (`Game [0100ABCD12345000][v0].nsp`). Systems without a built-in download work with any emulator you link with **Use existing .exe…**.
+Switch and Switch 2 games can also be unpacked game folders (`<game>\base\exefs\main`). Systems without a built-in download work with any emulator you link with **Use existing .exe…**.
 
 ### Your own artwork
 Your own files always win over downloads. PyroCade reads:
@@ -144,9 +145,9 @@ On Windows you can also double-click `start.bat`. Build the installer with `npm 
 **Checks:**
 - `npm run artwork:check`, `npm run carousel:check`, `npm run prompts:check` and `npm run brand:check` run on every pull request.
 - `npm run ui:check` and `npm run eshop:check` use covers from your local `data/` folder.
-- `npm run docs:screens` captures the demo shelf. Set `PYROCADE_SCREENS_DIR` to write those images to a separate folder.
+- `npm run docs:screens` recreates the screenshots from the demo shelf (handy when you have no library at hand).
 
-**Releasing:** raise `version` in `package.json`, commit, and push a tag `v<version>`. The **Release** workflow builds the Windows installer with the Leia SR presenter, plus the Linux and macOS packages. It smoke-tests Linux and macOS and attaches the installers to a draft release. Publish the draft and installed copies offer the update.
+**Releasing:** raise `version` in `package.json`, commit, and push a tag `v<version>`. The **Release** workflow builds the Windows installer and Linux packages, smoke-tests Linux and attaches everything to a draft release. Publish the draft and installed copies offer the update.
 
 ## Your data stays local
 Everything personal lives in `data/` and is never part of this repository:
@@ -154,19 +155,8 @@ Everything personal lives in `data/` and is never part of this repository:
 - `emulators/`: emulators installed by PyroCade.
 - `media/`: downloaded artwork.
 
-## Report a problem or send feedback
-Open **Settings → Feedback → Report a problem or suggest a change**. Choose a problem report or a suggestion, add a summary and description, and use **Continue on GitHub** to review and submit it in your browser. A GitHub account is required, and reports are public. You can attach screenshots on GitHub before submitting.
-
-The form shows the app version and basic device details that will be included; uncheck the option to leave them out. Logs, local paths, credentials and your game library are not attached automatically. **Copy report** works offline and lets you paste the report into a message or a [new issue](https://github.com/Pyrodrifter/PyroCade/issues/new/choose). You can also report directly using the repository's problem and feedback templates.
-
-## Thanks
-
-- **[afterkaze](https://www.reddit.com/user/RiceDesperate5724/)** (u/RiceDesperate5724 on Reddit) suggested hiding games without touching the ROM folder and reported the Switch update and DLC counting and fullscreen issues. Their fork introduced continuous carousel navigation, a right-click menu, and renaming. They also contributed Leia SR stereo, carousel previews, drag ordering, game metadata controls, and the Recomp shelf. [Pull request #4](https://github.com/Pyrodrifter/PyroCade/pull/4)
-
-Found something, or want something? [Open an issue](https://github.com/Pyrodrifter/PyroCade/issues) — and if you have already written the fix, a pull request is very welcome.
-
 ## Legal
-PyroCade is only a launcher. It does not include or download games, BIOS files or console firmware/keys. Use dumps of games and systems you own. Emulators come from their own official GitHub releases, or a fork you choose, and remain under their own licenses. Artwork and game details come from the LaunchBox Games Database, GameTDB, Libretro thumbnails, the Super Mario Wiki, the Internet Archive and (optionally) ScreenScraper, and belong to their respective owners. The screenshots use local library artwork. The Kirby Air Ride booklet links to a local PDF manual. The Emulators shot uses a demo configuration.
+PyroCade is only a launcher. It does not include or download games, BIOS files or console firmware/keys. Use dumps of games and systems you own. Emulators come from their own official GitHub releases, or a fork you choose, and remain under their own licenses. Artwork and game details come from the LaunchBox Games Database, GameTDB, Libretro thumbnails and (optionally) ScreenScraper, and belong to their respective owners. The screenshots show a personal library with artwork downloaded through PyroCade; the Emulators shot uses the demo setup.
 
 ## License
 MIT. See [LICENSE](LICENSE). Changes are listed in the [changelog](CHANGELOG.md).

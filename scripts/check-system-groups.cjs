@@ -1,0 +1,12 @@
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
+const source=fs.readFileSync('main.js','utf8'),handlers={},files=new Map();let writes=0;
+const state=source.slice(source.indexOf('const emptyState ='),source.indexOf('// ---------- Library scanning'));
+const actions=source.slice(source.indexOf('function setGameHidden('),source.indexOf("handle('game:setMetadata'"));
+const context=vm.createContext({fs:{mkdirSync(){},writeFileSync(p,v){writes++;files.set(p,v)},renameSync(a,b){files.set(b,files.get(a))},readFileSync(p){if(!files.has(p))throw Error('missing');return files.get(p)}},DATA:'fixture',STATE_PATH:'state',console,setTimeout,clearTimeout,handle:(id,fn)=>handlers[id]=fn,libraryGames:[{id:'a',system:'switch'},{id:'b',system:'switch'},{id:'c',system:'recomp'}],config:{systems:[{id:'switch'},{id:'recomp'}]},win:{},Menu:{buildFromTemplate:entries=>({popup:({callback})=>{entries[0].click();callback()}})}});
+vm.runInContext(state+actions,context);
+handlers['game:setHidden']({gameId:'c',hidden:true});const before=writes;
+const result=handlers['library:setSystemGamesHidden']({system:'switch',hidden:true});assert.equal(writes,before+1);assert.equal(result.length,2);assert(result.every(x=>x.hidden));
+vm.runInContext('libraryState=loadState()',context);assert.equal(vm.runInContext("gameState('a').hidden",context),true);
+handlers['library:setSystemGamesHidden']({system:'switch',hidden:false});assert.equal(vm.runInContext("gameState('b').hidden",context),false);assert.equal(vm.runInContext("gameState('c').hidden",context),true);
+assert.throws(()=>handlers['library:setSystemGamesHidden']({system:'unknown',hidden:false}));assert.throws(()=>handlers['game:screenshotMenu']('unknown'));
+handlers['game:screenshotMenu']('a').then(choose=>{assert.equal(choose,true);console.log('PASS: grouped visibility saves once, persists/restores and preserves other systems; screenshot menu validates game')}).catch(e=>{console.error(e);process.exitCode=1});

@@ -1,0 +1,22 @@
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict'),path=require('node:path'),{EventEmitter}=require('node:events');
+const source=fs.readFileSync('main.js','utf8'),handlers={};let picked,menu,menuPick,saved=0,launched,tracked=0;
+const config={systems:[{id:'recomp',name:'Recomp',extensions:['.exe'],direct:true,romDir:'C:\\ignored-library'}],extraGames:[]};
+const context=vm.createContext({config,path:path.win32,fs:{existsSync:()=>true,statSync:p=>({isDirectory:()=>!p.endsWith('.exe')&&!p.endsWith('.txt'),isFile:()=>p.endsWith('.exe')||p.endsWith('.txt')})},fsp:{stat:async()=>({size:1})},dialog:{showOpenDialog:async()=>picked},win:{},randomUUID:()=>String(config.extraGames.length+1).padStart(8,'0'),saveConfig:()=>saved++,handle:(id,fn)=>handlers[id]=fn,DATA:'C:\\data',romDirsOf:()=>{throw Error('Recomp must not scan helper executables')},walkRoms:()=>{throw Error('Must not scan')},looseKey:s=>s.toLowerCase(),stem:s=>s,copyScore:()=>0,indexMediaRoot:async()=>({}),readGamelist:async()=>new Map(),findMedia:async()=>({media:{},info:{}}),displayTitle:s=>s,fileUrl:s=>s,gameState:()=>({}),Menu:{buildFromTemplate:items=>{menu=items;return{popup:({callback})=>{if(menuPick)items.find(x=>x.label===menuPick).click();callback()}}}},libraryGames:[],shell:{},macAppBinary:p=>p,process:{platform:'win32'},spawn:(exe,args,options)=>{launched={exe,args,options};const child=new EventEmitter();child.unref=()=>{};queueMicrotask(()=>child.emit('spawn'));return child},track:()=>tracked++});
+const part=(start,end)=>source.slice(source.indexOf(start),source.indexOf(end,source.indexOf(start)));
+vm.runInContext(part("handle('game:add'","handle('game:remove'"),context);
+vm.runInContext(part("handle('game:chooseExecutable'","handle('game:setFavorite'"),context);
+vm.runInContext(part('let libraryGames = [];','// ---------- Artwork download'),context);
+vm.runInContext(part('async function launchDirect(game)', '// The disc to start'),context);
+(async()=>{
+ picked={canceled:false,filePaths:['C:\\Games\\Adventure 1.0']};await handlers['game:add']({system:'recomp',title:''});assert.equal(config.extraGames.length,1);assert.equal(config.extraGames[0].title,'Adventure 1.0');
+ await assert.rejects(()=>handlers['game:add']({system:'recomp'}),/already/);
+ let games=await vm.runInContext('scanLibrary()',context);assert.equal(games.length,1);assert.equal(games[0].base,'Adventure 1.0');assert.equal(games[0].romPath,'C:\\Games\\Adventure 1.0');const id=games[0].id;
+ await assert.rejects(()=>context.launchDirect(games[0]),/choose its .exe/i);
+ picked={canceled:false,filePaths:['C:\\Games\\Adventure 1.0\\game.exe']};await handlers['game:chooseExecutable'](id);assert.equal(config.extraGames[0].executable,picked.filePaths[0]);
+ games=await context.scanLibrary();assert.equal(games[0].id,id);await context.launchDirect(games[0]);assert.equal(launched.exe,picked.filePaths[0]);assert.equal(launched.options.cwd,'C:\\Games\\Adventure 1.0');assert.equal(tracked,1);
+ picked={canceled:false,filePaths:['C:\\Games\\bad.txt']};await assert.rejects(()=>handlers['game:chooseExecutable'](id),/exe/);
+ menuPick='Choose artwork image…';assert.equal((await handlers['game:contextMenu'](id)).action,'artwork');assert(menu.some(x=>x.label==='Choose game .exe…'));
+ menuPick='Choose game .exe…';assert.equal((await handlers['game:contextMenu'](id)).action,'executable');
+ vm.runInContext("libraryGames.push({id:'normal',system:'switch'})",context);menuPick='Choose artwork image…';assert.equal((await handlers['game:contextMenu']('normal')).action,'artwork');assert(!menu.some(x=>x.label==='Choose game .exe…'));
+ assert(saved>=2);console.log('PASS: folder add/duplicates, no helper scanning, dotted folder names, stable IDs, per-game executable persistence/validation, direct launch working directory and menu actions');
+})().catch(e=>{console.error(e);process.exitCode=1});

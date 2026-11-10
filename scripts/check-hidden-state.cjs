@@ -1,0 +1,16 @@
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
+const source=fs.readFileSync('main.js','utf8');
+const stateSource=source.slice(source.indexOf('const emptyState ='),source.indexOf('// ---------- Library scanning'));
+const handlerSource=source.slice(source.indexOf('function setGameHidden('),source.indexOf("handle('game:contextMenu'"));
+const files=new Map(),handlers={};
+const context=vm.createContext({fs:{mkdirSync(){},writeFileSync(p,v){files.set(p,v)},renameSync(a,b){files.set(b,files.get(a))},readFileSync(p){if(!files.has(p))throw Error('missing');return files.get(p)}},DATA:'fixture',STATE_PATH:'state.json',console,setTimeout,clearTimeout,handle:(id,fn)=>handlers[id]=fn,libraryGames:[{id:'game'},{id:'dlc'}],gameId:'dlc',assert});
+vm.runInContext(stateSource+handlerSource,context);
+assert.equal(handlers['game:setHidden']({gameId:'dlc',hidden:true}).hidden,true);
+vm.runInContext('libraryState = loadState()',context);
+assert.equal(vm.runInContext("gameState('dlc').hidden",context),true);
+assert.equal(vm.runInContext("gameState('game').hidden",context),false);
+assert.throws(()=>handlers['game:setHidden']({gameId:'missing',hidden:true}));
+assert.equal(handlers['game:setHidden']({gameId:'dlc',hidden:false}).hidden,false);
+vm.runInContext('libraryState = loadState()',context);
+assert.equal(vm.runInContext("gameState('dlc').hidden",context),false);
+console.log('PASS: hide/restore, persisted state reload, unrelated games, unknown-game rejection');

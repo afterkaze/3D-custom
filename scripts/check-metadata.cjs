@@ -1,0 +1,17 @@
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
+const source=fs.readFileSync('main.js','utf8');
+const state=source.slice(source.indexOf('const emptyState ='),source.indexOf('// ---------- Library scanning'));
+const handlersSource=source.slice(source.indexOf('function setGameHidden('),source.indexOf("handle('game:contextMenu'"));
+const files=new Map(),handlers={};
+const c=vm.createContext({fs:{mkdirSync(){},writeFileSync(p,v){files.set(p,v)},renameSync(a,b){files.set(b,files.get(a))},readFileSync(p){if(!files.has(p))throw Error('missing');return files.get(p)}},DATA:'fixture',STATE_PATH:'state.json',console,setTimeout,clearTimeout,handle:(id,fn)=>handlers[id]=fn,libraryGames:[{id:'game'},{id:'dlc'}]});
+vm.runInContext(state+handlersSource,c);
+handlers['game:setHidden']({gameId:'dlc',hidden:true});
+const save=handlers['game:setMetadata'];
+save({gameId:'game',title:'  Custom title <>&  ',version:'  1.2.3  '});
+vm.runInContext('libraryState = loadState()',c);
+let result=vm.runInContext("gameState('game')",c);assert.equal(result.title,'Custom title <>&');assert.equal(result.version,'1.2.3');assert.equal(result.customTitle,true);
+assert.equal(vm.runInContext("gameState('dlc').hidden",c),true);
+for(const patch of [{title:''},{title:'x'.repeat(201)},{version:'v'.repeat(81)},{title:4},{gameId:'missing'}])assert.throws(()=>save({gameId:'game',title:'Title',version:'1',...patch}));
+save({gameId:'game',title:'Title',version:''});assert.equal(vm.runInContext("gameState('game').version",c),'');
+save({gameId:'game',title:'Title',version:'1',mediaType:'switch'});vm.runInContext('libraryState = loadState()',c);assert.equal(vm.runInContext("gameState('game').mediaType",c),'switch');assert.throws(()=>save({gameId:'game',title:'Title',version:'1',mediaType:'invalid'}));
+console.log('PASS: edited title/version persist, trimming, validation, version clearing and hidden-state preservation');

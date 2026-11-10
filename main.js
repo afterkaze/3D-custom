@@ -1,6 +1,10 @@
 // PyroCade — main process: config, library scanning, launching, emulator downloads.
-const { app, BrowserWindow, ipcMain, dialog, shell, clipboard, nativeImage, safeStorage, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, nativeImage, safeStorage, Menu } = require('electron');
 if(process.platform==='win32')app.commandLine.appendSwitch('force-high-performance-gpu');
+// Chromium caps tile memory per page at 512 MB (1 GB on 4K screens). The Ultra 3D surface (two full-resolution
+// eyes, 7680x2160 at 4K) needs more: over the cap, tiles were dropped and redrawn, which showed as black
+// flicker and blank patches. This is a ceiling, not an allocation; ordinary 2D use stays well below it.
+app.commandLine.appendSwitch('force-gpu-mem-available-mb', '3072');
 app.setName('PyroCade');
 if(process.platform==='win32')app.setAppUserModelId('com.pyrodrifter.pyrocade');
 // PyroCade stays open behind a running game. Without this, Windows reports the covered window as
@@ -41,13 +45,10 @@ const { spawn } = require('child_process');
 const { randomUUID } = require('crypto');
 const { pipeline } = require('stream/promises');
 const { Readable } = require('stream');
-const { pathToFileURL } = require('url');
+const { pathToFileURL, fileURLToPath } = require('url');
 const {createArtworkService} = require('./artwork');
-const {createLaunchBox} = require('./launchbox');
+const {createLaunchBox, parseGameId} = require('./launchbox');
 const {createScreenScraper} = require('./screenscraper');
-const {createMarioWiki} = require('./mariowiki');
-const {createInternetArchive} = require('./internet-archive');
-const {createFeedbackService} = require('./feedback');
 
 const ROOT = __dirname;
 // Where settings, installed emulators and artwork live:
@@ -127,7 +128,6 @@ function defaultConfig() {
     mediaRoot: '',
     launchAnimation: true,
     checkUpdates: true,
-    fullscreen: false,
     promptFamily: 'auto',
     motion: 'auto',
     eShopStyle: 'enhanced',
@@ -188,7 +188,8 @@ let config = loadConfig();
 // Kept apart from config.json: it changes after every game and every selection, and the window's
 // "Save & rescan" (which sends a whole config) must never overwrite it.
 const STATE_PATH = path.join(DATA, 'library-state.json');
-const emptyState = () => ({ favorites: {}, hidden: {}, titles: {}, metadata: {}, order: {}, stats: {}, discs: {}, ui: {} });
+// sources[gameId]: {launchbox:{id} (details/art pinned to one LaunchBox entry), art:{kind:{url|from, how}}}.
+const emptyState = () => ({ favorites: {}, hidden: {}, metadata: {}, order: {}, stats: {}, discs: {}, ui: {}, sources: {} });
 function loadState() {
   try { const s = JSON.parse(fs.readFileSync(STATE_PATH, 'utf8')); return { ...emptyState(), ...(s && typeof s === 'object' ? s : {}) }; }
   catch { return emptyState(); }
@@ -204,12 +205,10 @@ function writeState() {
   } catch (e) { console.error(`library-state.json could not be saved: ${e.message}`); }
 }
 const saveState = () => { clearTimeout(stateTimer); stateTimer = setTimeout(writeState, 800); };
-// What the window needs to know about one game: favourite, hidden, play time, last played, chosen disc.
+// What the window needs to know about one game: favourite, play time, last played, chosen disc.
 function gameState(id) {
   const st = libraryState.stats[id] || {};
-  const metadata = libraryState.metadata?.[id] || {};
-  const customTitle = metadata.title || libraryState.titles?.[id] || '';
-  return { ...metadata, customTitle, hidden: !!libraryState.hidden?.[id], favorite: !!libraryState.favorites[id], playMs: st.ms || 0, lastPlayed: st.last || 0, plays: st.plays || 0, disc: libraryState.discs[id] || 0 };
+  return { ...(libraryState.metadata[id] || {}), customTitle: !!libraryState.metadata[id], hidden: !!libraryState.hidden[id], favorite: !!libraryState.favorites[id], playMs: st.ms || 0, lastPlayed: st.last || 0, plays: st.plays || 0, disc: libraryState.discs[id] || 0 };
 }
 
 // ---------- Library scanning ----------
@@ -229,26 +228,9 @@ const KINDS = {
   video:      { names: ['video', 'trailer'], folders: ['videos'], exts: ['.mp4', '.webm'] },
 };
 
-// During a scan each folder is listed once: the ROM walk, the media index and the per-game media
-// lookup all ask for the same folders, and on a hard drive every listing costs a seek.
-let scanListings = null;
 async function listDir(dir) {
-  const cache = scanListings, key = cache && dir.toLowerCase();
-  if (cache?.has(key)) return cache.get(key);
-  const listing = fsp.readdir(dir, { withFileTypes: true }).catch(() => []);
-  cache?.set(key, listing);
-  return listing;
+  try { return await fsp.readdir(dir, { withFileTypes: true }); } catch { return []; }
 }
-// Runs fn over items with at most `limit` running at once, results in input order. Scans are mostly
-// waiting on the disk, so overlapping the waits is where the time goes.
-async function mapLimit(items, limit, fn) {
-  const out = new Array(items.length);
-  let next = 0;
-  const worker = async () => { while (next < items.length) { const i = next++; out[i] = await fn(items[i], i); } };
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
-  return out;
-}
-const SCAN_CONCURRENCY = 16;
 const stem = f => path.basename(f, path.extname(f)).toLowerCase();
 const fileUrl = p => (p ? pathToFileURL(p).href : null);
 
@@ -267,14 +249,11 @@ const displayTitle = s => cleanTitle(s).replace(/^(.+?),? (The|A|An)(?= - |$)/, 
 // in e.g. "00 Goodies\Manuals" are picked up too. Files are matched by exact name, then loosely by
 // title ("Game (USA).pdf" for "Game (USA) (Rev 1).rvz").
 async function indexMediaRoot(root) {
-  // files: every file seen in a kind folder (lower-case path), so side files such as a disc's
-  // .json can be checked without trying to read files that aren't there.
-  const idx = { gameDirs: new Map(), kinds: {}, loose: {}, files: new Set() };
+  const idx = { gameDirs: new Map(), kinds: {}, loose: {} };
   const kindOf = name => Object.entries(KINDS).find(([, k]) => k.folders.includes(name.toLowerCase()));
-  async function addKindFolder(dir, [kind, k], entries) {
+  async function addKindFolder(dir, [kind, k]) {
     const m = (idx.kinds[kind] ||= new Map()), loose = (idx.loose[kind] ||= new Map());
-    for (const f of entries ?? await listDir(dir)) {
-      if (f.isFile()) idx.files.add(path.join(dir, f.name).toLowerCase());
+    for (const f of await listDir(dir)) {
       if (!f.isFile() || !k.exts.includes(path.extname(f.name).toLowerCase())) continue;
       const file = path.join(dir, f.name);
       if (!m.has(stem(f.name))) m.set(stem(f.name), file);
@@ -282,32 +261,27 @@ async function indexMediaRoot(root) {
       for (const k of [key, bareKey(path.basename(f.name, path.extname(f.name)))]) if (k && !loose.has(k)) loose.set(k, file);
     }
   }
-  // Folders are listed in parallel but added in their listed order, so "first match wins" is unchanged.
-  const dirs = (await listDir(root)).filter(e => e.isDirectory());
-  const listed = await mapLimit(dirs, SCAN_CONCURRENCY, async e => {
-    const kind = kindOf(e.name), dir = path.join(root, e.name);
-    if (kind) return { kind, dir, entries: await listDir(dir) };
-    const subs = (await listDir(dir)).filter(sub => sub.isDirectory() && kindOf(sub.name));
-    return { dir, subs: await Promise.all(subs.map(async sub => ({ kind: kindOf(sub.name), dir: path.join(dir, sub.name), entries: await listDir(path.join(dir, sub.name)) }))) };
-  });
-  for (const [i, e] of dirs.entries()) {
-    const l = listed[i];
-    if (l.kind) { await addKindFolder(l.dir, l.kind, l.entries); continue; }
-    idx.gameDirs.set(e.name.toLowerCase(), l.dir);
-    for (const sub of l.subs) await addKindFolder(sub.dir, sub.kind, sub.entries);
+  for (const e of await listDir(root)) {
+    if (!e.isDirectory()) continue;
+    const kind = kindOf(e.name);
+    if (kind) { await addKindFolder(path.join(root, e.name), kind); continue; }
+    idx.gameDirs.set(e.name.toLowerCase(), path.join(root, e.name));
+    for (const sub of await listDir(path.join(root, e.name))) {
+      const inner = sub.isDirectory() && kindOf(sub.name);
+      if (inner) await addKindFolder(path.join(root, e.name, sub.name), inner);
+    }
   }
   return idx;
 }
 
 async function findMedia(indexes, base) {
   const key = base.toLowerCase();
-  const media = {}, seen = new Set();
+  const media = {};
   let info = null;
   for (const idx of indexes) {
     const dir = idx.gameDirs.get(key) || idx.gameDirs.get(cleanTitle(base).toLowerCase());
     if (dir) {
       const files = (await listDir(dir)).filter(f => f.isFile());
-      for (const f of files) seen.add(path.join(dir, f.name).toLowerCase());
       for (const [kind, k] of Object.entries(KINDS)) {
         if (media[kind]) continue;
         const hit = k.names.map(name=>files.filter(f=>stem(f.name)===name&&k.exts.includes(path.extname(f.name).toLowerCase())).sort((a,b)=>(path.extname(a.name).toLowerCase()==='.png'?0:1)-(path.extname(b.name).toLowerCase()==='.png'?0:1))[0]).find(Boolean);
@@ -320,9 +294,7 @@ async function findMedia(indexes, base) {
   }
   const loose = looseKey(base);
   for (const k of [loose, bareKey(base)]) if (k) for (const idx of indexes) for (const [kind, m] of Object.entries(idx.loose || {})) if (!media[kind] && m.has(k)) media[kind] = m.get(k);
-  // Whether a file next to the found media exists, from the folder listings already made.
-  const has = p => { const lower = p.toLowerCase(); return seen.has(lower) || indexes.some(idx => idx.files?.has(lower)); };
-  return { media, info, has };
+  return { media, info };
 }
 
 // Minimal EmulationStation gamelist.xml reader.
@@ -363,7 +335,8 @@ async function walkRoms(dir, exts, depth = 0, out = [], rootEntries) {
     const p = path.join(dir, e.name);
     if (e.isDirectory()) { if (depth < 4 && !SKIP_DIRS.test(e.name)) await walkRoms(p, exts, depth + 1, out); }
     else if (exts.includes(path.extname(e.name).toLowerCase())) {
-      out.push({ name: e.name, path: p });
+      let size = 0; try { size = (await fsp.stat(p)).size; } catch {}
+      out.push({ name: e.name, path: p, size });
     }
   }
   return out;
@@ -379,23 +352,8 @@ const looseKey = s => cleanTitle(s).normalize('NFD').replace(/[̀-ͯ]/g, '').toL
 const BRAND = /^\s*(disney\s*[-•]?\s*pixar|disney|pixar|dreamworks|nickelodeon|nicktoons)('s)?\b[\s:-]*/i;
 const bareKey = name => { if (!BRAND.test(cleanTitle(name))) return ''; const b = looseKey(cleanTitle(name).replace(BRAND, '')); return b.length >= 6 ? b : ''; };
 
-// Nintendo Switch dumps write the 16-digit title ID into the file name:
-// "Game [0100ABCD12345000][v0].nsp". A game's update ends in …800 and its downloadable content in
-// …1000 and up, so clearing the low 13 bits of any of them gives the base game's own ID. Nintendo
-// never hands out a base ID inside that range, so two different games can never collide here.
-const TITLE_ID = /\[([0-9a-f]{16})\]/i;
-function switchTitleId(name) {
-  const m = name.match(TITLE_ID);
-  if (!m) return null;
-  const id = BigInt('0x' + m[1]);
-  // part: 0 = the game itself, 0x800 = its update, 0x1000 and up = one of its DLC packs.
-  return { base: (id & ~0x1fffn).toString(16).padStart(16, '0'), part: Number(id & 0x1fffn) };
-}
-// Updates and DLC join the game they belong to instead of each becoming a game of their own.
-const switchGroup = name => switchTitleId(name)?.base || '';
-
 // When the same game appears more than once, keep the best copy.
-function copyScore(f, titleIds) {
+function copyScore(f) {
   const n = f.name;
   let s = 0;
   if (/\((u|usa|us|e|eu|europe|world|en)\b|\(usa?,|\[usa?\]|\(ue\)/i.test(n)) s += 4;
@@ -403,43 +361,13 @@ function copyScore(f, titleIds) {
   if (/\[!\]/.test(n)) s += 2;
   if (/\b(update|upd|dlc)\b|\[v[1-9]\d*\]|\(beta|\(proto|\(demo|\(hack|\[(b|h|t|o)\d*\]/i.test(n)) s -= 6;
   if (!/\.zip$/i.test(n)) s += 1;
-  // Switch: the game itself is what you launch, so it beats its own update and DLC files.
-  if (titleIds) { const id = switchTitleId(n); if (id) s += id.part === 0 ? 8 : -8; }
-  return s;
-}
-
-// Only tied copies need a size check. Keep the existing 9 GB cap on the tie-break.
-// Sizes of tied copies are remembered in the library cache: on a hard drive (and with antivirus
-// opening every .zip) reading them is most of a scan. A full rescan from Settings reads them again.
-// knownSizes: from the cache; scanSizes: the sizes this scan used, saved for the next one.
-let knownSizes = null, scanSizes = null, rereadSizes = false;
-async function copySize(file) {
-  if (file.size === undefined && !rereadSizes && knownSizes?.has(file.path)) file.size = knownSizes.get(file.path);
-  if (file.size === undefined) {
-    try { file.size = (await fsp.stat(file.path)).size; } catch { file.size = 0; }
-  }
-  if (!file.dump) scanSizes?.set(file.path, file.size);
-  return Math.min(file.size, 9e9);
+  return s + Math.min(f.size / 1e10, 0.9); // tie-break: bigger file (base game rather than patch)
 }
 
 const romDirsOf = sys => [...new Set(String(sys.romDir || '').split('|')
   .map(folder => folder.trim().replace(/^"(.*)"$/, '$1').trim()).filter(Boolean))];
 let libraryGames = [];
 async function scanLibrary(folderReport) {
-  if (!knownSizes) await readLibraryCache();
-  const listings = scanListings = new Map(), sizes = scanSizes = new Map();
-  rereadSizes = !!folderReport; // Settings' "Save & rescan" reads every size again
-  try {
-    const games = await scanFolders(folderReport, listings);
-    knownSizes = sizes;
-    lastScanChanged = writeLibraryCache(games.raw);
-    return games.shown;
-  } finally {
-    if (scanListings === listings) scanListings = null;
-    if (scanSizes === sizes) scanSizes = null;
-  }
-}
-async function scanFolders(folderReport, listings) {
   const games = [];
   for (const sys of config.systems) {
     // A system can have several ROM folders (e.g. games split across two SD cards), separated by "|".
@@ -462,40 +390,25 @@ async function scanFolders(folderReport, listings) {
         continue;
       }
       scannedDirs.push(dir);
-      listings.set(dir.toLowerCase(), Promise.resolve(entries));
       const matches = (await walkRoms(dir, exts, sys.direct ? 4 : 0, [], entries))
         .filter(file => !/\(track \d+\)/i.test(file.name));
       for (const file of matches) files.push({ ...file, root: dir, rootIndex: ri });
       folderReport?.push({ system: sys.name, folder: dir, count: matches.length, extensions: exts });
     }
     for (const x of extras) {
-      files.push({ name: path.basename(x.path), path: x.path, root: path.dirname(x.path), rootIndex: 'added-' + x.id, title: x.title, added: x.id, score: Infinity });
+      let size = 0; try { size = (await fsp.stat(x.path)).size; } catch {}
+      files.push({ name: path.basename(x.path), path: x.path, size, root: path.dirname(x.path), rootIndex: 'added-' + x.id, title: x.title, added: x.id, score: Infinity });
     }
     if (!files.length) continue;
     // Prefer .m3u playlists over their individual discs.
     const m3u = new Set(files.filter(f => /\.m3u$/i.test(f.name)).map(f => looseKey(stem(f.name))));
-    // Switch-style libraries group by title ID, so an update or a DLC pack never becomes its own game.
-    const titleIds = ['.nsp', '.xci', '.nsz', '.xcz'].some(e => exts.includes(e));
-    // Keep every copy that shares the top score; only those ties need their file sizes read,
-    // and those reads all run together.
-    const tops = new Map();
+    const best = new Map();
     for (const f of files) {
       const base = sys.id === 'recomp' ? f.name : path.basename(f.name, path.extname(f.name));
       if (!/\.m3u$/i.test(f.name) && /\(disc \d+\)/i.test(base) && m3u.has(looseKey(base))) continue;
-      const key = sys.id === 'recomp' ? f.added : (titleIds && switchGroup(base)) || looseKey(base) || base.toLowerCase();
-      if (f.score !== Infinity) f.score = copyScore(f, titleIds);
-      const top = tops.get(key);
-      if (!top || top[0].score < f.score) tops.set(key, [f]);
-      else if (top[0].score === f.score) top.push(f);
-    }
-    const tied = [...tops.values()].filter(t => t.length > 1 && t[0].score !== Infinity).flat();
-    await mapLimit(tied, SCAN_CONCURRENCY, copySize);
-    const best = new Map();
-    for (const [key, top] of tops) {
-      let pick = top[0];
-      // The first copy wins unless a later one is strictly bigger (sizes capped at 9 GB).
-      for (const f of top.slice(1)) if (pick.score !== Infinity && await copySize(pick) < await copySize(f)) pick = f;
-      best.set(key, pick);
+      const key = sys.id === 'recomp' ? f.added : looseKey(base) || base.toLowerCase();
+      if (f.score !== Infinity) f.score = copyScore(f);
+      if (!best.has(key) || best.get(key).score < f.score) best.set(key, f);
     }
     const roots = [...(sys.id === 'recomp' ? extras.flatMap(x => [path.join(x.path, 'media'), x.path]) : []), config.mediaRoot && path.join(config.mediaRoot, sys.id), ...scannedDirs.flatMap(d => [path.join(d, 'media'), d]), path.join(DATA, 'media', sys.id)].filter(Boolean);
     const indexes = await Promise.all(roots.map(indexMediaRoot));
@@ -517,15 +430,13 @@ async function scanFolders(folderReport, listings) {
       const discs = [...seen].sort((a, b) => a[0] - b[0]);
       best.set(key, { ...discs[0][1], score: chosen.score, discs: discs.map(([n, f]) => ({ n, path: f.path })) });
     }
-    // Games are matched to their media in parallel; results keep the order of `best`.
-    games.push(...await mapLimit([...best.values()], SCAN_CONCURRENCY, async f => {
+    for (const f of best.values()) {
       const base = sys.id === 'recomp' ? f.name : path.basename(f.name, path.extname(f.name));
-      const { media, info, has } = await findMedia(indexes, base);
+      const { media, info } = await findMedia(indexes, base);
       const meta = { ...(gamelist.get(base.toLowerCase()) || {}), ...(info || {}), ...(f.title ? { title: f.title } : {}) };
       let shell = null;
-      const shellFile = media.disc && media.disc.replace(/\.[^.\\/]+$/, '.json');
-      if (shellFile && has(shellFile)) try { shell = JSON.parse(await fsp.readFile(shellFile, 'utf8')).shell || null; } catch {}
-      return {
+      if (media.disc) try { shell = JSON.parse(await fsp.readFile(media.disc.replace(/\.[^.\\/]+$/, '.json'), 'utf8')).shell || null; } catch {}
+      games.push({
         id: `${sys.id}:${f.rootIndex ? f.rootIndex + ':' : ''}${path.relative(f.root, f.path)}`,
         system: sys.id,
         romPath: f.path,
@@ -536,65 +447,14 @@ async function scanFolders(folderReport, listings) {
         ...(shell && /^#[0-9a-f]{6}$/i.test(shell) ? { shell } : {}),
         info: meta,
         media: Object.fromEntries(Object.entries(media).map(([k, v]) => [k, k === 'manual' ? v : fileUrl(v)])),
-      };
-    }));
+      });
+    }
   }
-  // The cache copy is taken before presentLibrary lays the player's settings over the games.
-  const raw = JSON.stringify(games);
-  return { raw, shown: presentLibrary(games) };
-}
-let lastScanChanged = true;
-
-// ---------- Library cache ----------
-// The last scan, so the next start shows the shelf at once and rescans behind it. It holds only
-// what the scan found: favourites, play time, custom titles and per-game settings are laid over it
-// fresh every time. It is used only while the folders and app version it was made with still match.
-const LIBRARY_CACHE_PATH = path.join(DATA, 'library-cache.json');
-const libraryCacheKey = () => JSON.stringify({
-  version: APP_VERSION, mediaRoot: config.mediaRoot || '', extraGames: config.extraGames || [],
-  systems: config.systems.map(s => [s.id, s.romDir || '', s.extensions || [], !!s.direct]),
-});
-let libraryCacheText = null; // the games part of the last written or read cache, to tell if a rescan changed anything
-let libraryCacheSizes = null;
-// text: the scanned games as JSON. Returns whether they differ from the cached ones.
-function writeLibraryCache(text) {
-  const sizes = JSON.stringify(Object.fromEntries(knownSizes || []));
-  const changed = text !== libraryCacheText;
-  if (!changed && sizes === libraryCacheSizes) return false;
-  libraryCacheText = text; libraryCacheSizes = sizes;
-  const tmp = `${LIBRARY_CACHE_PATH}.tmp`;
-  fsp.mkdir(DATA, { recursive: true })
-    .then(() => fsp.writeFile(tmp, `{"key":${JSON.stringify(libraryCacheKey())},"sizes":${sizes},"games":${text}}`))
-    .then(() => fsp.rename(tmp, LIBRARY_CACHE_PATH))
-    .catch(e => log(`library cache not saved: ${e.message}`));
-  return changed;
-}
-// Returns the cached games when they were scanned with the current folders and app version.
-// File sizes are kept whatever the key: they belong to files, not to the settings.
-async function readLibraryCache() {
-  let cached = null;
-  try { cached = JSON.parse(await fsp.readFile(LIBRARY_CACHE_PATH, 'utf8')); } catch {}
-  if (!knownSizes) {
-    knownSizes = new Map(Object.entries(cached?.sizes && typeof cached.sizes === 'object' ? cached.sizes : {}).filter(([, v]) => Number.isFinite(v)));
-    libraryCacheSizes = JSON.stringify(Object.fromEntries(knownSizes));
-  }
-  if (cached?.key !== libraryCacheKey() || !Array.isArray(cached.games) || !cached.games.length) return null;
-  libraryCacheText = JSON.stringify(cached.games);
-  return cached.games;
-}
-
-// Lays the player's own settings over scanned games and sorts them for the shelf.
-function presentLibrary(games) {
   for (const g of games) {
     if (config.shellColors?.[g.id]) g.shellCustom = config.shellColors[g.id];
     if (config.gameEmulators?.[g.id]) g.emulator = config.gameEmulators[g.id];
-    // A title typed in Rename… wins over the scanned one, so the shelf sorts by it too.
-    // The scanned title is kept so "Use the file name" can put it back exactly.
-    g.scannedTitle = g.title;
-    g.title = gameState(g.id).customTitle || g.scannedTitle;
   }
-  const compareTitles = new Intl.Collator(undefined, { sensitivity: 'base' }).compare;
-  games.sort((a, b) => compareTitles(a.title, b.title));
+  games.sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
   libraryGames = games;
   // The window gets the disc numbers and the game's own state, never the other disc paths.
   return games.map(({ discPaths, ...g }) => ({ ...g, ...gameState(g.id) }));
@@ -708,21 +568,34 @@ function screenScraperCredentials() {
   return scraperCredentials = { user: c.user || '', devId: c.devId || '', password: unsealed(c.password), devPassword: unsealed(c.devPassword) };
 }
 const screenscraper = createScreenScraper({ getCredentials: screenScraperCredentials });
+// Recomp games are PC ports of console games: look them up across the console databases, ignoring words
+// like "Recomp" or "PC" and version numbers. A game pinned to a LaunchBox entry always uses that entry.
+// Older consoles first: most recompilations target them, so "Shadow of the Colossus" finds the PS2 original.
+const RECOMP_LOOKUP_SYSTEMS = ['pc', 'n64', 'ps2', 'gc', 'ps1', 'x360', 'xbox', 'ps3', 'wii', 'wiiu', 'psp', 'switch', 'ps4', 'gba', 'snes', 'nds', '3ds'];
+const RECOMP_SUFFIXES = ['', 'remastered', 'remaster', 'hd', 'collection', 'definitiveedition', 'deluxe'];
+function launchboxLookup(game) {
+  const pinned = libraryState.sources?.[game.id]?.launchbox;
+  if (pinned?.id) return { id: pinned.id };
+  if (game.system !== 'recomp') return null;
+  const key = s => looseKey(String(s || '').replace(/[\[(][^\])]*[\])]/g, ' ').replace(/\bv?\d+(?:\.\d+)+\b/gi, ' ').replace(/\b(recomp(iled|ilation)?|decomp(iled)?|pc\s*port|port|pc|native|windows)\b/gi, ' '));
+  const bases = [...new Set([key(game.title), key(game.base)].filter(Boolean))];
+  return { sysIds: RECOMP_LOOKUP_SYSTEMS, keys: RECOMP_SUFFIXES.flatMap(suffix => bases.map(b => b + suffix)) };
+}
+function recordArtSource(gameId, kind, source) {
+  const entry = (libraryState.sources ||= {})[gameId] ||= {};
+  (entry.art ||= {})[kind] = { ...source, at: Date.now() };
+  saveState();
+}
 const launchbox = createLaunchBox({
   dataDir: DATA,
   normalize: looseKey,
+  lookupFor: launchboxLookup,
   download: (url, file, onBytes) => artwork.download(url, file, onBytes),
   onStatus: message => artwork.note(message),
 });
-// Volunteer-run sites: a generic name that says what is asking, one request a second, answers kept a month.
-const WEB_AGENT = `PyroCade/${require('./package.json').version} (+https://github.com/Pyrodrifter/PyroCade)`;
-const mariowiki = createMarioWiki({ dataDir: DATA, userAgent: WEB_AGENT });
-const internetArchive = createInternetArchive({ dataDir: DATA, normalize: looseKey, userAgent: WEB_AGENT });
 const artwork = createArtworkService({
   launchbox,
   screenscraper,
-  mariowiki,
-  internetArchive,
   cartridgeLabel,
   encodeImage: encodeArtwork,
   dataDir: DATA,
@@ -730,6 +603,7 @@ const artwork = createArtworkService({
   getGames: () => libraryGames,
   normalize: looseKey,
   decodeImage: artworkPng,
+  onSource: (game, kind, url) => { if (url && kind !== 'frontHQ') recordArtSource(game.id, kind, { url, how: 'download' }); },
   onProgress: progress => {
     if (win && !win.isDestroyed()) win.webContents.send('art:progress', progress);
     // The first download builds the LaunchBox database; fill in game details right away.
@@ -1325,48 +1199,29 @@ async function installAppUpdate(send) {
 const {LeiaOutput}=require('./leia-output');
 let leiaOutput;
 // ---------- Window & IPC ----------
-// Fullscreen is remembered, so PyroCade opens the way it was left. --fullscreen and --windowed set
-// it from a shortcut or from Steam's launch options; like F11, the choice is then remembered.
-const flag = name => process.argv.slice(1).includes('--' + name);
-const startFullscreen = flag('fullscreen') || (!!config.fullscreen && !flag('windowed'));
 function createWindow() {
   win = new BrowserWindow({
     width: 1600, height: 900, minWidth: 1100, minHeight: 650,
     show: !previewMode,
-    fullscreen: startFullscreen && !previewMode,
     backgroundColor: '#07080c', autoHideMenuBar: true, title: 'PyroCade',
     icon:path.join(ROOT,'renderer/assets/brand/pyrocade-icon-256.png'),
     // plugins: Chromium's built-in PDF viewer, used to read manuals inside PyroCade.
     webPreferences: { preload: path.join(ROOT, 'preload.js'), contextIsolation: true, sandbox: false, plugins: true, autoplayPolicy:'no-user-gesture-required',offscreen: previewMode, backgroundThrottling: !previewMode },
   });
-  // A --fullscreen / --windowed launch is the same choice as pressing F11, so record it either way.
-  if (!previewMode && config.fullscreen !== startFullscreen) { config.fullscreen = startFullscreen; saveConfig(config); }
   leiaOutput=new LeiaOutput(win,status=>{if(win&&!win.isDestroyed())win.webContents.send('leia:status',status);});
+  leiaOutput.quality=LeiaOutput.qualities[config.leiaQuality]?config.leiaQuality:'native';
+  leiaOutput.layout=LeiaOutput.layouts[config.leiaOutputLayout]?config.leiaOutputLayout:'leia';
   win.on('closed',()=>leiaOutput?.disable());
   win.loadFile(path.join(ROOT, 'renderer', 'index.html'));
   win.webContents.once('did-finish-load', () => log('window loaded', { visible: win.isVisible(), bounds: win.getBounds() }));
   win.webContents.on('did-fail-load', (_e, code, desc) => log('window failed to load', code, desc));
   if (configWarning) win.webContents.once('did-finish-load', () => win.webContents.send('toast', configWarning));
-  // Consume F11 before Electron's menu can also toggle fullscreen.
-  // Ctrl/Cmd+Shift+F also works when F11 is taken by the window manager.
   win.webContents.on('before-input-event', (event, input) => {
-    const key = String(input.key || '');
-    if (key !== 'F11' && !(key.toLowerCase() === 'f' && input.shift && (input.control || input.meta))) return;
+    if (input.key !== 'F11') return;
+    // Consume the default menu accelerator so F11 cannot toggle twice.
     event.preventDefault();
-    if (input.type === 'keyDown' && !input.isAutoRepeat) setFullScreen(!win.isFullScreen());
+    if (input.type === 'keyDown' && !input.isAutoRepeat) win.setFullScreen(!win.isFullScreen());
   });
-  // Remember the choice however it was made: the shortcut, the setting, or the title bar.
-  for (const [event, on] of [['enter-full-screen', true], ['leave-full-screen', false]])
-    win.on(event, () => {
-      if (config.fullscreen !== on) { config.fullscreen = on; saveConfig(config); }
-      if (!win.isDestroyed()) win.webContents.send('fullscreen', on);
-    });
-}
-function setFullScreen(on) {
-  if (!win || win.isDestroyed()) return false;
-  win.setFullScreen(!!on);
-  // Linux window managers answer asynchronously, so report what was asked for.
-  return !!on;
 }
 
 const handle = (ch, fn) => ipcMain.handle(ch, async (_e, ...a) => {
@@ -1377,6 +1232,15 @@ handle('leia:status',()=>leiaOutput?.status()||{enabled:false,available:false});
 handle('leia:enable',async enabled=>{
   const status=enabled?await leiaOutput.enable():leiaOutput.disable();
   config.leiaSR=!!status.enabled;saveConfig(config);return status;
+});
+handle('leia:quality',quality=>{
+  if(!LeiaOutput.qualities[quality])throw new Error('Unknown 3D resolution.');
+  leiaOutput?.setQuality(quality);config.leiaQuality=quality;saveConfig(config);return quality;
+});
+handle('leia:layout',async layout=>{
+  if(!LeiaOutput.layouts[layout])throw new Error('Unknown 3D display output.');
+  config.leiaOutputLayout=layout;saveConfig(config);
+  const status=await leiaOutput.setLayout(layout);config.leiaSR=!!status.enabled;saveConfig(config);return status;
 });
 let leiaGPUInfo;
 handle('leia:diagnostics',async()=>{
@@ -1391,7 +1255,7 @@ ipcMain.on('leia:snapshot',(event,snapshot)=>{
   if(snapshot.patches&&(snapshot.patches.length>512||snapshot.patches.reduce((sum,p)=>sum+(p.html?.length||0)+(p.children||[]).reduce((n,c)=>n+(c.html?.length||0),0),0)>5000000))return;
   if(!Number.isInteger(snapshot.width)||!Number.isInteger(snapshot.height)||snapshot.width<100||snapshot.width>8000||snapshot.height<100||snapshot.height>8000)return;
   snapshot.depth=Number.isFinite(Number(snapshot.depth))?Math.max(0,Math.min(64,Number(snapshot.depth))):32;
-  if(snapshot.stereo){const controls={};for(const key of ['depth','popout','convergence'])controls[key]=Number.isFinite(Number(snapshot.stereo[key]))?Math.max(0,Math.min(200,Number(snapshot.stereo[key]))):100;snapshot.stereo=controls;}
+  if(snapshot.stereo){const controls={};for(const key of ['depth','popout','convergence']){const signed=key==='convergence';controls[key]=Number.isFinite(Number(snapshot.stereo[key]))?Math.max(signed?-200:0,Math.min(200,Number(snapshot.stereo[key]))):signed?0:100;}snapshot.stereo=controls;}
   leiaOutput?.push(snapshot);
 });
 handle('config:get', () => ({ ...config, screenscraper: undefined }));
@@ -1399,8 +1263,7 @@ handle('config:get', () => ({ ...config, screenscraper: undefined }));
 // renderer holding an older copy of the config can never overwrite them.
 handle('config:set', cfg => {
   if (!cfg || !Array.isArray(cfg.systems)) throw new Error('Invalid settings');
-  // fullscreen is owned by the window (app:setFullscreen), so a stale copy here can never undo it.
-  const next = { ...cfg, emulators: config.emulators, customEmulators: config.customEmulators, screenscraper: config.screenscraper, extraGames: config.extraGames, shellColors: config.shellColors, gameEmulators: config.gameEmulators, fullscreen: config.fullscreen };
+  const next = { ...cfg, emulators: config.emulators, customEmulators: config.customEmulators, screenscraper: config.screenscraper, extraGames: config.extraGames, shellColors: config.shellColors, gameEmulators: config.gameEmulators };
   saveConfig(next);
   config = next;
   return config;
@@ -1413,7 +1276,7 @@ async function fillGameDetails(games) {
   for (const game of games) {
     if (game.demo || (game.info?.description && game.info?.year)) continue;
     let details = null;
-    try { details = await launchbox.details(game.system, artwork.titleKeys(game)); } catch { return changed; }
+    try { details = await launchbox.details(game.system, artwork.titleKeys(game), game); } catch { return changed; }
     if (!details) continue;
     const added = {};
     for (const [k, v] of Object.entries(details)) if (!game.info?.[k]) added[k] = v;
@@ -1427,24 +1290,13 @@ async function fillGameDetails(games) {
 // After the first scan, shrink oversized images saved by 0.3.0 in the background and hand the
 // new files to the window as they are ready.
 let compacted = false;
-// Details are filled in after the library is shown, so a scan never waits on them.
-const fillDetailsLater = games => setImmediate(() => fillGameDetails(games).then(changed => {
-  if (changed.length && win && !win.isDestroyed()) win.webContents.send('library:info', changed);
-}).catch(() => {}));
-// The last scan's games, for showing the shelf before the first scan of this start finishes.
-handle('library:cached', async () => {
-  const cached = await readLibraryCache();
-  if (!cached) return null;
-  const games = presentLibrary(cached);
-  fillDetailsLater(games);
-  return games;
-});
-// onlyIfChanged: the window already shows the cached library, so return null when nothing changed.
-handle('library:scan', async (withReport = false, { onlyIfChanged = false } = {}) => {
+handle('library:scan', async (withReport = false) => {
   const folders = withReport ? [] : undefined;
   const games = await scanLibrary(folders);
-  if (onlyIfChanged && !withReport && !lastScanChanged) return null;
-  fillDetailsLater(games);
+  // Details are filled in after the library is shown, so a scan never waits on them.
+  setImmediate(() => fillGameDetails(games).then(changed => {
+    if (changed.length && win && !win.isDestroyed()) win.webContents.send('library:info', changed);
+  }).catch(() => {}));
   if (!compacted) {
     compacted = true;
     const marker = path.join(DATA, 'media', '_index', 'compacted-v1');
@@ -1458,17 +1310,6 @@ handle('library:scan', async (withReport = false, { onlyIfChanged = false } = {}
   return withReport ? { games, folders } : games;
 });
 handle('app:version', () => APP_VERSION);
-ipcMain.on('app:quit', event => {
-  if (event.sender === win?.webContents && event.senderFrame === event.sender.mainFrame) app.quit();
-});
-const feedback = createFeedbackService({
-  diagnostics: () => `PyroCade: ${APP_VERSION}\nOS: ${os.type()} ${os.release()} (${process.arch})\nElectron: ${process.versions.electron}\nInstallation: ${app.isPackaged ? 'Packaged app' : 'From source'}`,
-  openExternal: url => shell.openExternal(url),
-  writeText: text => clipboard.writeText(text),
-});
-handle('feedback:info', feedback.info);
-handle('feedback:open', feedback.open);
-handle('feedback:copy', feedback.copy);
 handle('app:checkUpdate', checkAppUpdate);
 handle('app:installUpdate', async () => {
   const result = await installAppUpdate(p => { if (win && !win.isDestroyed()) win.webContents.send('app:updateProgress', p); });
@@ -1502,11 +1343,26 @@ handle('library:setSystemGamesHidden', ({system, hidden}) => {
   writeState();
   return games.map(g => ({gameId:g.id,...gameState(g.id)}));
 });
-handle('game:screenshotMenu', gameId => {
-  if (!libraryGames.some(g => g.id === gameId)) throw new Error('Select a game in your library first.');
+// Right-click entries that lead to where a picture came from: the exact image link, the LaunchBox game page,
+// or the local file. Only links PyroCade recorded or matched itself are opened.
+async function sourceMenuItems(game, kind, label) {
+  const items = [], saved = libraryState.sources?.[game.id]?.art?.[kind], link = webLink(saved?.url);
+  if (link) items.push({ label: `Open ${label} source link`, click: () => shell.openExternal(link) });
+  let match = null; try { match = await launchbox.match(game, artwork.titleKeys(game)); } catch {}
+  if (match?.page) items.push({ label: 'View game on LaunchBox', click: () => shell.openExternal(match.page) });
+  const media = game.media?.[kind]; let file = null;
+  if (typeof media === 'string' && media.startsWith('file:')) try { file = fileURLToPath(media.split('?')[0]); } catch {}
+  if (file && fs.existsSync(file)) items.push({ label: `Show ${label} file`, click: () => shell.showItemInFolder(file) });
+  if (saved?.how === 'import' && saved.from && fs.existsSync(saved.from)) items.push({ label: `Show original ${label} file`, click: () => shell.showItemInFolder(saved.from) });
+  return items;
+}
+handle('game:screenshotMenu', async gameId => {
+  const game = libraryGames.find(g => g.id === gameId);
+  if (!game) throw new Error('Select a game in your library first.');
+  const sources = await sourceMenuItems(game, 'screenshot', 'screenshot');
   return new Promise(resolve => {
-    let choose = false;
-    Menu.buildFromTemplate([{label:'Choose screenshot image…',click:()=>{choose=true;}}]).popup({window:win,callback:()=>resolve(choose)});
+    let result = false;
+    Menu.buildFromTemplate([{label:'Choose screenshot image…',click:()=>{result=true;}}, ...(sources.length ? [{type:'separator'}, ...sources] : []), {type:'separator'}, {label:'Sources…',click:()=>{result='sources';}}]).popup({window:win,callback:()=>resolve(result)});
   });
 });
 handle('game:setMetadata', ({ gameId, title, version, mediaType }) => {
@@ -1515,14 +1371,9 @@ handle('game:setMetadata', ({ gameId, title, version, mediaType }) => {
   if (typeof title !== 'string' || !title.trim() || title.length > 200) throw new Error('Enter a title of up to 200 characters.');
   if (typeof version !== 'string' || version.length > 80) throw new Error('Enter a version of up to 80 characters.');
   if(mediaType!==undefined&&!['','disc','switch','switch2','gba','n64','nds'].includes(mediaType))throw new Error('Choose a supported media type.');
-  const name = title.trim();
-  const metadata = {...libraryState.metadata[gameId],version:version.trim(),...(mediaType!==undefined?{mediaType}:{})};
-  if (name === game.scannedTitle) delete metadata.title; else metadata.title = name;
-  libraryState.metadata[gameId] = metadata;
-  delete libraryState.titles[gameId];
-  game.title = name;
+  libraryState.metadata[gameId] = {...libraryState.metadata[gameId],title:title.trim(),version:version.trim(),...(mediaType!==undefined?{mediaType}:{})};
   writeState();
-  return { ...gameState(gameId), title: name };
+  return gameState(gameId);
 });
 handle('game:openFolder', async gameId => {
   const game = libraryGames.find(g => g.id === gameId);
@@ -1547,27 +1398,22 @@ handle('library:recompMenu', () => new Promise(resolve => {
   let add = false;
   Menu.buildFromTemplate([{label:'Add Recomp game…',click:()=>{add=true;}}]).popup({window:win,callback:()=>resolve(add)});
 }));
+handle('game:contextMenu', async gameId => {
+  const game = libraryGames.find(g => g.id === gameId);
+  if (!game) throw new Error('Select a game in your library first.');
+  const sources = await sourceMenuItems(game, 'front', 'cover');
+  return new Promise(resolve => {
+    let result = null;
+    Menu.buildFromTemplate([...(libraryGames.find(g => g.id === gameId)?.system === 'recomp' ? [{label:'Add Recomp game…',click:()=>{result={action:'addRecomp'};}},{type:'separator'},{label:'Choose game .exe…',click:()=>{result={action:'executable'};}}] : []), {label:'Choose artwork image…',click:()=>{result={action:'artwork'};}}, { label: 'Open game folder', click: () => { result = { action: 'folder' }; } }, {label:'Media type…',click:()=>{result={action:'mediaType'};}}, { label: 'Edit details…', click: () => { result = { action: 'edit' }; } }, {label:'Sources…',click:()=>{result={action:'sources'};}}, ...(sources.length ? [{ type: 'separator' }, ...sources] : []), { type: 'separator' }, { label: 'Hide game', click: () => { result = setGameHidden(gameId, true); } }])
+      .popup({ window: win, callback: () => resolve(result) });
+  });
+});
 handle('game:setFavorite', ({ gameId, favorite }) => {
   if (!libraryGames.some(g => g.id === gameId)) throw new Error('Select a game in your library first.');
   if (favorite) libraryState.favorites[gameId] = true; else delete libraryState.favorites[gameId];
   saveState();
   return gameState(gameId);
 });
-// Rename a game. Like hiding, this lives in library-state.json; the file on disk keeps its name.
-// An empty title clears the override and the scanned file name comes back.
-handle('game:setTitle', ({ gameId, title }) => {
-  const game = libraryGames.find(g => g.id === gameId);
-  if (!game) throw new Error('Select a game in your library first.');
-  const wanted = String(title ?? '').replace(/\s+/g, ' ').trim().slice(0, 120);
-  libraryState.titles ||= {};
-  if (libraryState.metadata?.[gameId]) delete libraryState.metadata[gameId].title;
-  if (wanted) libraryState.titles[gameId] = wanted; else delete libraryState.titles[gameId];
-  game.title = wanted || game.scannedTitle || displayTitle(game.base);
-  saveState();
-  return { title: game.title, ...gameState(gameId) };
-});
-handle('app:fullscreen', () => !!(win && !win.isDestroyed() && win.isFullScreen()));
-handle('app:setFullscreen', on => setFullScreen(on));
 // What the library looked like when PyroCade was closed: system, selected game per system, sort and filter.
 handle('library:gameOrders',()=>libraryState.order || {});
 handle('library:saveGameOrder',({system,gameIds})=>{
@@ -1710,13 +1556,77 @@ handle('art:import', async ({gameId,kind}) => {
   if(picked.canceled)return null;
   const source=picked.filePaths[0];
   if((await fsp.stat(source)).size>20*1024*1024)throw new Error('Choose an image smaller than 20 MB.');
-  const png=await artworkPng(await fsp.readFile(source));
+  const url=await saveGameImage(game,kind,await artworkPng(await fsp.readFile(source)));
+  recordArtSource(game.id,kind,{from:source,how:'import'});
+  return {gameId:game.id,media:{[kind]:url},replace:true};
+});
+// Chosen pictures live in the game's own media folder (media/<system>/<game>/<kind>.png), which wins over
+// downloaded copies on every rescan.
+async function saveGameImage(game,kind,png){
+  if(/[<>:"/\\|?*\x00-\x1f]/.test(game.base)||game.base==='.'||game.base==='..')throw new Error('Invalid game filename');
   const sys=config.systems.find(s=>s.id===game.system);
   const root=config.mediaRoot?path.join(config.mediaRoot,sys.id):path.join(DATA,'media',sys.id);
   const folder=path.join(root,game.base);await fsp.mkdir(folder,{recursive:true});
   const dest=path.join(folder,`${kind}.png`);await fsp.writeFile(dest,png);
   const url=fileUrl(dest)+'?v='+Date.now();game.media[kind]=url;
-  return {gameId:game.id,media:{[kind]:url},replace:true};
+  return url;
+}
+
+// ---------- Where a game's details and artwork come from ----------
+const SOURCE_KINDS=['front','back','disc','screenshot','logo','fanart'];
+const DETAIL_FIELDS=['description','year','developer','publisher','genre','players'];
+const webLink=text=>{let u;try{u=new URL(String(text||'').trim())}catch{return null}return /^https?:$/.test(u.protocol)&&u.hostname?u.href:null;};
+async function gameSources(game){
+  const entry=libraryState.sources?.[game.id]||{},keys=artwork.titleKeys(game);
+  let match=null;try{match=await launchbox.match(game,keys)}catch{}
+  const art={};
+  for(const kind of SOURCE_KINDS){
+    const saved=entry.art?.[kind]||{},media=game.media?.[kind];let file=null;
+    if(typeof media==='string'&&media.startsWith('file:'))try{file=fileURLToPath(media.split('?')[0])}catch{}
+    let suggested='';if(launchbox.available())try{suggested=(await launchbox.find(game.system,keys,kind,{offline:true,game}))[0]||''}catch{}
+    art[kind]={url:saved.url||'',from:saved.from||'',how:saved.how||'',file,suggested};
+  }
+  return {gameId:game.id,launchbox:match,ready:launchbox.available(),art};
+}
+const sourceGame=gameId=>{const game=libraryGames.find(g=>g.id===gameId);if(!game||game.demo)throw new Error('Select a game in your library first.');return game;};
+handle('game:sources',gameId=>gameSources(sourceGame(gameId)));
+// Pins (or, with an empty link, unpins) a game to one LaunchBox games-database entry; its details are
+// replaced by that entry's right away and artwork lookups use it from now on.
+handle('game:setDetailsSource',async({gameId,url})=>{
+  const game=sourceGame(gameId),entry=(libraryState.sources||={})[gameId]||={};
+  const useDetails=details=>{const info={...(game.info||{})};for(const k of DETAIL_FIELDS){if(details?.[k])info[k]=details[k];else delete info[k];}game.info=info;return info;};
+  if(!String(url||'').trim()){
+    const wasPinned=!!entry.launchbox;delete entry.launchbox;saveState();
+    // Back to automatic matching: show the automatic entry's details again.
+    if(wasPinned&&launchbox.available())useDetails(await launchbox.details(game.system,artwork.titleKeys(game),game).catch(()=>null));
+    return {info:game.info||{},sources:await gameSources(game)};
+  }
+  const id=parseGameId(url);
+  if(!id)throw new Error('Paste a LaunchBox games database link, like https://gamesdb.launchbox-app.com/games/details/12345');
+  if(!launchbox.available())throw new Error('Download artwork once (Artwork tab) so PyroCade has the LaunchBox database, then try again.');
+  const previous=entry.launchbox;entry.launchbox={id};
+  const details=await launchbox.details(game.system,artwork.titleKeys(game),game).catch(()=>null);
+  if(!details){if(previous)entry.launchbox=previous;else delete entry.launchbox;throw new Error(`LaunchBox game ${id} is not in PyroCade's database (its system may not be supported yet).`);}
+  saveState();
+  return {info:useDetails(details),sources:await gameSources(game)};
+});
+// Replaces one picture with the image at a web link (http/https).
+handle('game:setArtSource',async({gameId,kind,url})=>{
+  const game=sourceGame(gameId);
+  if(!SOURCE_KINDS.includes(kind))throw new Error('Choose an artwork type.');
+  const link=webLink(url);if(!link)throw new Error('Enter a web link to an image (starting with https://).');
+  let bytes;try{bytes=await artwork.fetchImage(link)}catch(e){throw new Error(`Could not use that image: ${e.message}`)}
+  if(!bytes)throw new Error('Nothing was found at that link.');
+  const media=await saveGameImage(game,kind,bytes);
+  recordArtSource(game.id,kind,{url:link,how:'link'});
+  return {gameId:game.id,media:{[kind]:media},replace:true,sources:await gameSources(game)};
+});
+// Opens a source: web links in the browser, local pictures in their folder.
+handle('game:openSource',async target=>{
+  const link=webLink(target);if(link)return shell.openExternal(link);
+  let file=String(target||'');if(file.startsWith('file:'))try{file=fileURLToPath(file.split('?')[0])}catch{}
+  if(!file||!path.isAbsolute(file)||!fs.existsSync(file))throw new Error('That file is no longer there.');
+  shell.showItemInFolder(file);
 });
 // Manuals are PDFs kept as media/<system>/manuals/<game>.pdf. A hard link is used when the PDF is on
 // the same drive (no extra space); otherwise it is copied.

@@ -23,25 +23,6 @@ kbd { font: 600 11px "Segoe UI"; padding: 2px 6px; border-radius: 4px; backgroun
 code { background: rgba(255,255,255,.08); padding: 1px 5px; border-radius: 4px; }
 .hidden { display: none !important; }
 
-/* Feedback stays in-app until the user chooses to open their browser. */
-#feedbackDialog { width:min(650px,calc(100vw - 48px)); max-height:calc(100vh - 48px); overflow:auto; border:1px solid var(--line); border-radius:18px; padding:24px; color:var(--text); background:#151b27; box-shadow:0 30px 100px #0009; user-select:text; }
-#feedbackDialog::backdrop { background:#030710b3; backdrop-filter:blur(12px); }
-.feedback-heading { display:flex; align-items:center; justify-content:space-between; gap:16px; }
-.feedback-heading h2 { margin:0; font-size:22px; }
-.feedback-heading button { padding:4px 12px; font-size:24px; }
-#feedbackForm > label, #feedbackStepsGroup > label { display:block; font-size:13px; margin:14px 0 6px; }
-#feedbackForm > input, #feedbackForm > select, #feedbackForm textarea { width:100%; }
-#feedbackForm textarea { display:block; resize:vertical; min-height:70px; font:inherit; font-size:14px; color:var(--text); background:rgba(0,0,0,.35); border:1px solid var(--line); border-radius:8px; padding:9px 11px; }
-#feedbackForm textarea:focus { outline:1px solid var(--accent); }
-#feedbackForm .feedback-diagnostics-toggle { display:flex; align-items:center; gap:8px; }
-#feedbackDevice { white-space:pre-wrap; overflow-wrap:anywhere; font-size:12px; line-height:1.5; padding:10px 12px; border-radius:8px; background:#0004; margin:8px 0; }
-.feedback-note, #feedbackPrivacy { font-size:12px; line-height:1.6; }
-#feedbackStatus { font-size:13px; line-height:1.5; overflow-wrap:anywhere; }
-#feedbackStatus:empty { display:none; }
-.feedback-actions { display:flex; justify-content:flex-end; gap:10px; margin-top:16px; }
-.feedback-browse { padding:0; border:0; border-radius:0; background:transparent; color:var(--accent2); font-size:12px; }
-.feedback-browse:hover { background:transparent; text-decoration:underline; }
-
 /* ---------- ambient background ---------- */
 #bg { position: fixed; inset: 0; z-index: 0; background: radial-gradient(ellipse at 50% 30%, var(--tint), #07080c 70%); transition: background 1s; }
 .bg-layer { position: absolute; inset: -60px; background-size: cover; background-position: center; filter: blur(40px) saturate(1.3) brightness(.45);
@@ -103,20 +84,19 @@ header { position: relative; z-index: 5; display: flex; align-items: center; gap
 .shelf-arrow:hover { border-color: var(--accent); background: #28212a; transform: translateY(-2px); }
 .shelf-arrow:disabled { opacity: .18; }
 .shelf-arrow.previous { left: 35px; }.shelf-arrow.next { right: 35px; }
-.shelf-position { position: absolute; left: 60px; right: 60px; bottom: 0; display: flex; align-items: center; gap: 16px; font-size: 10px; color: #a5adbf; }
+.shelf-position { position: absolute; left: 60px; right: 60px; bottom: 0; translate: 0 var(--shelf-tools-drop, 0px); display: flex; align-items: center; gap: 16px; font-size: 10px; color: #a5adbf; }
 #shelfPosition { font-variant-numeric: tabular-nums; min-width: 68px; letter-spacing: .09em; }
 .shelf-progress { height: 2px; width: 110px; background: #ffffff14; border-radius: 2px; overflow: hidden; }
 .shelf-progress i { display: block; height: 100%; background: var(--accent2); min-width: 3px; transition: width .45s ease; }
 .shelf-instruction { margin-left: auto; color: #a1a9bc; }
 #empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 18px; }
 
-.item { position: absolute; width: var(--w); height: var(--h); transform-style: preserve-3d; transition: transform .7s cubic-bezier(.22,1,.36,1); cursor: pointer; }
+.item { position: absolute; transform-style: preserve-3d; transition: transform .65s cubic-bezier(.2,.75,.2,1); cursor: pointer; }
 .item.far { visibility: hidden; pointer-events: none; }
 /* Filters or opacity on a 3D ancestor flatten its six faces. Shade the faces instead. */
 .item:not(.sel) .f-front::after { background: #080b1555; }
-.item .sway { transform-style: preserve-3d; transform: rotateY(0deg); transition: transform .7s cubic-bezier(.22,1,.36,1); }
-/* Ease into the selected pose before the idle loop starts, so selection never snaps. */
-.item.sel .sway { transform: rotateY(22deg) rotateX(-4deg); animation: shelf-float 6s ease-in-out .7s infinite; }
+.item .sway { transform-style: preserve-3d; transform: rotateY(0deg); transition: transform .7s cubic-bezier(.2,.8,.2,1); }
+.item.sel .sway { animation: shelf-float 6s ease-in-out infinite; }
 @keyframes shelf-float { 0%,100% { transform: translateY(0) rotateY(22deg) rotateX(-4deg); } 50% { transform: translateY(-5px) rotateY(26deg) rotateX(-3deg); } }
 .item .shadow { position: absolute; left: -8%; right: -8%; height: 48px; pointer-events: none; transform: rotateX(90deg); transform-origin: top; }
 .item .shadow::before,.item .shadow::after { content: ''; position: absolute; inset: 0; border-radius: 50%; background: #0009; filter: blur(13px); }
@@ -157,7 +137,6 @@ header { position: relative; z-index: 5; display: flex; align-items: center; gap
 .f-back::after { background: linear-gradient(245deg, rgba(255,255,255,.12), transparent 40%); }
 /* Packaging materials and printed spine inserts, shared by shelf and case viewer. */
 .box[data-material] :is(.f-front,.f-back,.l-front) { padding: var(--case-rim); background-origin: content-box; background-clip: content-box; border-radius: var(--case-radius); background-color: var(--case-shell); }
-.box:is([data-packaging='snes'],[data-packaging^='superfamicom-']) :is(.f-front,.f-back) { background-size: contain; background-position: center; background-repeat: no-repeat; }
 .box[data-material] :is(.f-front,.l-front) > .digital-sleeve { inset: var(--case-rim); }
 .box[data-material] :is(.f-front,.f-back,.l-front)::after { border: var(--case-rim) solid var(--case-shell); border-radius: var(--case-radius); box-shadow: inset 0 0 0 1px #ffffff24; }
 .box[data-material] :is(.f-right,.f-top,.f-bottom) { background: linear-gradient(90deg,#0004,transparent 25%,#ffffff28 48%,#0003 52%,transparent 75%),var(--case-shell); border: 1px solid #ffffff25; }
@@ -231,24 +210,10 @@ header { position: relative; z-index: 5; display: flex; align-items: center; gap
 
 /* Shared physical media: carousel preview and full case viewer use the same model. */
 .physical-media { position: absolute; width: var(--mw); height: var(--mh); left: calc((var(--w) - var(--mw)) / 2); top: calc((var(--h) - var(--mh)) / 2); transform-style: preserve-3d; }
-/* CSS 3D sorts flat planes, not solids: where the media and the case share space, parts of the
-   cartridge get painted over the cover instead of being hidden inside the box. So the media waits
-   and travels entirely behind the case — one cartridge depth clear of its back face — and never
-   enters the box's own volume at any point in the slide. */
-.item .physical-media { --media-back: calc((var(--d) + var(--cd, 2px)) / -2 - 1px); visibility: hidden; pointer-events: none; transform: translate3d(0,0,var(--media-back)); transition: transform .85s cubic-bezier(.22,1,.36,1), visibility 0s .85s; }
+.item .physical-media { visibility: hidden; transform: translate3d(0,0,0); transition: transform .85s cubic-bezier(.2,.8,.2,1), visibility 0s .85s; }
 .item.sel.media-revealed .physical-media { visibility: visible; transition-delay: 0s; }
-.item.far .physical-media { visibility: hidden; transition: none; }
-/* Limit sideways travel to leave room for the next case. Cartridges rise above their own
-   cover so the label is visible, with the lift capped for tall shells. */
-.item.sel.media-revealed .physical-media { --media-out: min(var(--media-slide), calc(var(--w) * .8 - var(--mw) / 2)); }
-.item.sel.media-revealed .disc-model { --media-out: min(calc(var(--w) * .78), calc(var(--w) * .96 - var(--mw) / 2)); transform: translate3d(var(--media-out), calc(var(--h) * -.02), var(--media-back)) rotateY(-15deg) rotateZ(14deg); }
-.item.sel.media-revealed .disc-rotor { animation: disc-spin 120s linear infinite; }
-.item .disc-surface::after { animation: none; }
-.item.sel.media-revealed .cartridge-model {
-  --media-slide: calc(var(--w) * .71);
-  --media-lift: calc((var(--mh) - var(--h)) / 2 - min(var(--mh) * .55, var(--h) * .36));
-  transform: translate3d(var(--media-out), var(--media-lift), var(--media-back)) rotateY(-17deg) rotateZ(9deg);
-}
+.item.sel.media-revealed .disc-model { transform: translate3d(calc(var(--w) * .65), calc(var(--h) * .04), -8px) rotateY(-15deg) rotateZ(14deg); }
+.item.sel.media-revealed .cartridge-model { transform: translate3d(calc(var(--w) * .71), calc(var(--h) * -.28), -8px) rotateY(-17deg) rotateZ(9deg); }
 .disc-rotor { position: absolute; inset: 0; border-radius: 50%; transform-style: preserve-3d; }
 .disc-metal, .disc-surface, .disc-hub { position: absolute; inset: 0; border-radius: 50%; }
 .disc-metal { background: conic-gradient(#dce4ec,#767e95,#e8eff3,#b0c3d0,#737d94,#e0e6ed); box-shadow: 0 1px 0 #fff9, 2px 5px 2px #050610; mask-image: radial-gradient(circle,transparent 0 7%,#000 7.5%); }
@@ -265,8 +230,8 @@ header { position: relative; z-index: 5; display: flex; align-items: center; gap
 .cartridge-front, .cartridge-back { backface-visibility: hidden; }
 .cartridge-molding { position: absolute; inset: 0; width: 100%; height: 100%; }
 .cartridge-label { position: absolute; background-size: cover; background-position: center; border-radius: 1.5px; box-shadow: 0 0 0 1px #0005, 0 1px 0 #ffffff30; overflow: hidden; }
-.case.open .physical-media { transition: transform 1s cubic-bezier(.22,1,.36,1) .55s; transform: translate3d(calc(var(--w) * .85),-8px,150px) rotateY(-12deg) rotateZ(6deg); }
-.case .physical-media { transform: translateZ(0px); transition: transform .7s cubic-bezier(.22,1,.36,1); }
+.case.open .physical-media { transition: transform 1s cubic-bezier(.2,.8,.2,1) .55s; transform: translate3d(calc(var(--w) * .85),-8px,150px) rotateY(-12deg) rotateZ(6deg); }
+.case .physical-media { transform: translateZ(0px); transition: transform .65s cubic-bezier(.2,.8,.2,1); }
 
 /* ---------- info panel ---------- */
 #info { position: absolute; left: 0; right: 0; bottom: 76px; display: flex; gap: 32px; align-items: flex-end; padding: 22px 60px 0; z-index: 4; }
@@ -320,7 +285,7 @@ html[data-motion="reduced"] .spinner { animation: spin 1.5s linear infinite !imp
 @keyframes fade { from { opacity: 0; } }
 #caseScene { position: absolute; inset: 0; perspective: 1800px; cursor: grab; }
 #caseScene:active { cursor: grabbing; }
-#caseRig { position: absolute; left: 50%; top: 46%; transform-style: preserve-3d; transition: transform .1s ease-out; }
+#caseRig { position: absolute; left: 50%; top: 46%; transform-style: preserve-3d; transition: transform .08s linear; }
 .case-ui { position: absolute; left: 0; right: 0; bottom: 0; padding: 24px 48px 40px; display: flex; align-items: flex-end; gap: 24px; pointer-events: none; }
 .case-ui > * { pointer-events: auto; }
 .case-title { flex: 1; } .case-title h2 { margin: 4px 0 0; font-size: 32px; }
@@ -331,57 +296,21 @@ html[data-motion="reduced"] .spinner { animation: spin 1.5s linear infinite !imp
   background: radial-gradient(circle at 50% 50%, #2a2d35 0 12%, #0d0e12 12.5% 13.5%, #1a1c22 14%) , #16181d; }
 .jewel .tray { background: radial-gradient(circle at 50% 50%, rgba(255,255,255,.2) 0 12%, #111 12.5% 13.5%, rgba(20,22,30,.9) 14%); }
 .cartbox .tray, .ds .tray { background: linear-gradient(#202228, #15161b); }
-.lid, .case-spine { position: absolute; left: 0; top: 0; height: var(--h); transform-style: preserve-3d; transform-origin: 0 50%;
-  transition: transform 1.1s cubic-bezier(.45,0,.2,1); }
-/* The cover's hinge follows the free edge of the spine as it folds out from the tray. */
-.case-spine { width: var(--d); transform: translateZ(calc(var(--d) / -2)) rotateY(-90deg); }
-.case.open .case-spine { transform: translateZ(calc(var(--d) / -2)) rotateY(-180deg); }
-.case-spine .face { left: 0; width: 100%; height: 100%; }
-.case-spine .f-left { transform: translateZ(.5px); }
-.case-spine-inner { transform: rotateY(180deg) translateZ(.5px); background: linear-gradient(90deg,#0005,#fff2 23%,#0001 77%,#0006),var(--case-shell); }
-.lid { width: var(--w); transform: translateZ(calc(var(--d) / -2)) rotateY(-90deg) translateX(var(--d)) rotateY(90deg); }
+.lid { position: absolute; left: 0; top: 0; width: var(--w); height: var(--h); transform-style: preserve-3d; transform-origin: 0 50%;
+  transform: translateZ(calc(var(--d) / 2)); transition: transform 1.1s cubic-bezier(.5,0,.2,1); }
 .lid .face { width: var(--w); height: var(--h); }
 .lid .l-front { transform: translateZ(.5px); }
 .lid .l-inner { transform: rotateY(180deg) translateZ(.5px); background: linear-gradient(135deg, #1c1e25, #101116); box-shadow: inset 0 0 0 6px #22252d; }
-.case.open .lid { transform: translateZ(calc(var(--d) / -2)) rotateY(-180deg) translateX(var(--d)) rotateY(30deg); }
+.case.open .lid { transform: translateZ(calc(var(--d) / 2)) rotateY(-150deg); }
 .case[data-material='cardboard'] .tray { background: var(--case-shell); }
 .case[data-material='cardboard'] .lid { height: var(--d); transform-origin: 50% 0; transform: translateZ(calc(var(--d) / -2)) rotateX(90deg); }
 .case[data-material='cardboard'] .lid .face { height: var(--d); background: var(--case-print); border: 1px solid var(--case-shell); }
 .case[data-material='cardboard'] .lid .l-inner { background: var(--case-shell); box-shadow: none; }
 .case[data-material='cardboard'].open .lid { transform: translateZ(calc(var(--d) / -2)) rotateX(155deg); }
-/* The cartridge waits inside its cardboard box, centred, and comes out through the open top. Every
-   cartridge model fits its box (the 2600's, the tightest, has 1.4px of depth to spare), so centred
-   it stays wholly inside and the box hides it. Off centre it would not: at z 8 the front of the
-   shell came out through the cover, and CSS 3D sorts flat planes, not solids, so it was painted
-   over the box. It stays straight (no tilt) and moves in one continuous arc: the rise (translate)
-   and the move forward (transform) are separate animations with their own easing, so neither
-   stops while the other starts. It rises a little past its resting height, and the forward move
-   begins as its bottom clears the top (about .4s into the rise, which is also when the eased-in
-   forward move is still inside the box's few spare pixels of depth), so the glide is at full speed
-   while the rise peaks and it never touches the walls or the open flap behind it; it then settles just above the box, in
-   front of the flap, where the whole label shows. The resting pose is the plain translate and
-   transform, so reduced motion (no animation) still shows it there. */
-.case[data-material='cardboard'] .physical-media { transform: translateZ(0); translate: 0 0; }
-.case[data-material='cardboard'].open .physical-media {
-  --media-clear: min(calc(var(--h) * -.8), calc((var(--h) + var(--mh)) / -2 - 2px));
-  --media-over: calc(var(--media-clear) - 30px);
-  --media-front: calc((var(--d) + var(--cd, 2px)) / 2 + 4px);
-  translate: 0 var(--media-clear);
-  transform: translateZ(var(--media-front));
-  animation: cardboard-media-rise 1.4s .7s both, cardboard-media-forward .9s ease-in-out 1.12s both;
-}
-@keyframes cardboard-media-rise {
-  0% { translate: 0 0; animation-timing-function: cubic-bezier(.25,.6,.35,1); }
-  57% { translate: 0 var(--media-over); animation-timing-function: ease-in-out; }
-  100% { translate: 0 var(--media-clear); }
-}
-@keyframes cardboard-media-forward {
-  from { transform: translateZ(0); }
-  to { transform: translateZ(var(--media-front)); }
-}
+.case[data-material='cardboard'].open .physical-media { transform: translate3d(0,calc(var(--h) * -.8),8px) rotateY(-8deg) rotateZ(-4deg); }
 .box-flap-title { position: absolute; inset: 0; display: grid; place-items: center; font-size: calc(var(--d) * .21); font-weight: 650; padding: 2px 8%; color: var(--case-ink); text-align: center; overflow: hidden; }
 
-.manual { position: absolute; transform-style: preserve-3d; transition: transform 1s cubic-bezier(.22,1,.36,1); }
+.manual { position: absolute; transform-style: preserve-3d; transition: transform 1s cubic-bezier(.3,.9,.3,1); }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 .manual { width: calc(var(--w) * .92); height: calc(var(--h) * .92); left: calc(var(--w) * .04); top: calc(var(--h) * .04);
@@ -588,6 +517,19 @@ html[data-wear='on'] .item:not(.sel) .box .f-front::after { background: #080b155
 #gameDetailsEditor::backdrop { background:#000b;backdrop-filter:blur(6px); }
 #gameDetailsEditor label { display:block;margin:16px 0;font-size:14px; }
 #gameDetailsEditor input { display:block;width:100%;box-sizing:border-box;margin-top:7px; }
+#gameDetailsEditor:has(#gameSources[open]) { width:min(620px,92vw); }
+.game-sources { margin:18px 0 6px;border-top:1px solid var(--line);padding-top:12px; }
+.game-sources summary { cursor:pointer;font-weight:650;font-size:14px;list-style-position:outside; }
+.game-sources summary span { font-weight:400;color:var(--muted);font-size:12px;margin-left:6px; }
+#gameDetailsEditor .game-sources .source-field { display:block;margin:12px 0 2px;font-size:13px; }
+#gameDetailsEditor .game-sources .game-art-source > label { display:block;margin:0; }
+#gameDetailsEditor .game-sources > .sub { font-size:12px;line-height:1.5;margin-top:14px; }
+#gameDetailsEditor .game-sources .source-note .source-link { margin-left:4px; }
+.game-sources .source-row { display:flex;gap:6px;align-items:center;margin-top:5px; }
+#gameDetailsEditor .game-sources .source-row input { margin:0;flex:1;min-width:0;font-size:12px;font-family:ui-monospace,Consolas,monospace; }
+.game-sources .source-open { flex:none;width:34px;padding:6px 0;text-align:center; }
+.game-sources .source-note { margin:4px 0 0;font-size:11.5px;color:var(--muted);overflow-wrap:anywhere; }
+.game-sources .source-link { background:none;border:0;padding:0 2px;color:var(--accent2);font-size:11.5px;text-decoration:underline;cursor:pointer; }
 #gameDetailsError { color:#ff9989; }
 
 /* Console changes use one horizontal motion; cases arrive at their final size. */
@@ -599,6 +541,11 @@ html[data-wear='on'] .item:not(.sel) .box .f-front::after { background: #080b155
 /* Adjacent console previews stay beside the final games, never take over the screen. */
 .console-preview { position:absolute;left:84%;right:-120px;top:51%;transform:translateY(-50%);display:flex;align-items:center;gap:20px;pointer-events:none;transition:opacity .3s ease; }
 .console-preview.previous { left:-120px;right:84%;flex-direction:row-reverse;text-align:right; }
+.console-preview { --preview-from:56px;animation:console-preview-in .55s cubic-bezier(.2,.8,.2,1) backwards;transition:opacity .4s ease,translate .4s cubic-bezier(.4,0,.6,1); }
+.console-preview.previous { --preview-from:-56px; }
+.console-preview.preview-leaving { opacity:0 !important;translate:var(--preview-from) 0; }
+@keyframes console-preview-in { from { opacity:0;translate:var(--preview-from) 0; } }
+html[data-motion='reduced'] .console-preview { animation:none;transition:none; }
 .console-preview-name { flex:1;min-width:0;font-family:inherit;font-size:clamp(14px,1.45vw,27px);font-weight:600;letter-spacing:.02em;line-height:1.2;color:var(--text);text-shadow:0 2px 16px #0008; }
 .console-preview-covers { display:flex;align-items:center;flex:1;min-width:0;gap:6px; }
 .console-preview.previous .console-preview-covers { flex-direction:row-reverse; }
@@ -678,9 +625,13 @@ html[data-details-tiny='true'] #info .actions { display:none; }
 .item.drop-before::before,.item.drop-after::after { content:'';position:absolute;top:0;height:var(--h);width:4px;background:var(--accent2);box-shadow:0 0 18px var(--accent);z-index:200;border-radius:3px; }
 .item.drop-before::before { left:-12px; }.item.drop-after::after { left:calc(var(--w) + 8px); }
 #btnLeia3D[aria-pressed='true'], html[data-leia-active='true'] #btnLeia3D {
-  background:#ff823e;
-  border-color:#ff9d64;
-  color:#241006;
+  background:linear-gradient(180deg,#ff8f4c,#f06a24);
+  border-color:#ffb27f;
+  color:#fff;
+  font-weight:700;
+  /* White, glowing "3D on" text inside the orange pill. */
+  text-shadow:0 0 .12em #fff,0 0 .45em #ffffffd9,0 0 1em #ffd2b3cc !important;
+  box-shadow:0 0 16px #ff823e66,inset 0 1px 0 #ffffff40;
 }
 
 .leia-controls { position:fixed;right:24px;top:90px;z-index:9000;width:350px;max-width:calc(100vw - 48px);box-sizing:border-box;padding:16px 18px;background:#111722d9;border:1px solid #ffffff20;border-radius:12px;backdrop-filter:blur(16px);box-shadow:0 8px 32px #0005;font-size:13px; }
@@ -689,16 +640,38 @@ html[data-details-tiny='true'] #info .actions { display:none; }
 .leia-controls label { display:grid;grid-template-columns:88px minmax(0,1fr) 42px;align-items:center;gap:8px;margin:12px 0; }
 .leia-controls input { width:100%;min-width:0;accent-color:var(--accent);padding:0; }.leia-controls output { text-align:right;font-variant-numeric:tabular-nums; }
 .leia-controls-footer { margin-top:14px;color:var(--muted);font-size:10px; }.leia-controls-footer button { font-size:11px;padding:5px 10px; }
-#leiaPerformance { display:block;margin-top:12px;color:var(--muted);line-height:1.4; }
+#leiaPerformance { display:block;margin-top:12px;color:var(--muted);line-height:1.4;font-variant-numeric:tabular-nums; }
+.leia-quality { display:grid;grid-template-columns:88px minmax(0,1fr);align-items:center;gap:8px;margin:14px 0 4px; }
+.leia-quality-options { display:grid;grid-template-columns:repeat(3,1fr);padding:3px;gap:3px;border-radius:9px;background:#ffffff0d;border:1px solid #ffffff14; }
+.leia-quality-options button { border:0;border-radius:6px;background:transparent;padding:5px 0;font-size:12px;color:var(--muted);transition:background-color .18s ease,color .18s ease; }
+.leia-quality-options button:hover { color:var(--text,#fff);background:#ffffff0f; }
+.leia-quality-options button:is([aria-checked='true'],[aria-pressed='true']) { background:var(--accent);color:#111;font-weight:600; }
+.leia-output { margin:14px 0 4px; }.leia-output>span { display:block;margin-bottom:6px; }
+.leia-output-menu { position:relative; }
+#leiaOutputButton { display:flex;align-items:center;justify-content:space-between;width:100%;box-sizing:border-box;padding:8px 12px;border-radius:8px;background:#ffffff0d;border:1px solid #ffffff1f;font-size:13px;text-align:left; }
+#leiaOutputButton:hover,#leiaOutputButton[aria-expanded='true'] { background:#ffffff17; }
+.leia-output-chevron { width:7px;height:7px;margin:-3px 2px 0 12px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;rotate:45deg;transition:rotate .18s ease; }
+#leiaOutputButton[aria-expanded='true'] .leia-output-chevron { rotate:225deg;margin-top:3px; }
+.leia-output-list { display:grid;gap:2px;margin-top:4px;padding:4px;border-radius:8px;background:#1b2130;border:1px solid #ffffff1f;box-shadow:0 8px 24px #0006; }
+.leia-output-list.hidden { display:none; }
+.leia-output-list button { position:relative;border:0;border-radius:6px;background:transparent;padding:8px 12px 8px 16px;font-size:13px;text-align:left; }
+.leia-output-list button:hover,.leia-output-list button:focus-visible { background:#ffffff12; }
+.leia-output-list button[aria-selected='true'] { background:#ffffff0f; }
+.leia-output-list button[aria-selected='true']::before { content:'';position:absolute;left:4px;top:25%;bottom:25%;width:3px;border-radius:2px;background:var(--accent); }
+#leiaQualityRow.hidden { display:none; }
+/* Direct (non-Leia) outputs have no native cursor, so the host keeps the system cursor. */
+html[data-leia-layout]:not([data-leia-layout='leia'])[data-leia-rendering='true'],html[data-leia-layout]:not([data-leia-layout='leia'])[data-leia-rendering='true'] *{cursor:auto!important;}
 
-/* Keep the game actions in view as the screenshot resizes. */
-html[data-details-flow='true'] #info { display:grid;grid-template-columns:minmax(0,1fr) var(--details-shot-width);gap:24px;align-items:center; }
+/* The screenshot grows from the left toward the same center line as the selected cover. */
+html[data-details-flow='true'] #info { display:grid;grid-template-columns:var(--details-leading) var(--details-shot-width) minmax(0,1fr);gap:24px;align-items:center; }
 html[data-details-flow='true'] #info .info-text { grid-column:1;grid-row:1;max-width:none;min-width:0; }
 html[data-details-flow='true'] #info .shot { grid-column:2;grid-row:1;width:100%;box-sizing:border-box;align-self:end;position:relative; }
 html[data-details-resized='true'][data-details-flow='true'] #info { grid-template-rows:minmax(0,1fr); }
 #info #gShot video { position:absolute;inset:0; }
 html[data-details-resized='true'] #info { max-height:var(--details-max-height); }
 .cover-drag-preview { position:fixed;left:8px;top:8px;width:104px;height:146px;border-radius:4px;background-size:100% 100%;background-position:center;box-shadow:0 6px 20px #0007;z-index:10000;transform:none !important;pointer-events:none; }
+
+.search-shortcut { display:none !important; }
 
 html[data-leia-rendering='true'],html[data-leia-rendering='true'] *{cursor:none!important;}
 .leia-cursor{position:fixed;left:0;top:0;width:25px;height:34px;pointer-events:none!important;z-index:2147483647;will-change:transform;filter:drop-shadow(-1px 2px 0 #9b491e) drop-shadow(-2px 3px 0 #532710) drop-shadow(0 3px 5px #0009);}
@@ -715,9 +688,11 @@ html[data-details-flow='true'] #gShot.shot{width:100%!important;}
 
 html[data-details-flow='true'] #info .info-text {
   align-self:end;
-  min-height:var(--details-shot-height);
+  height:var(--details-shot-height);
+  min-height:0;
   display:flex;
   flex-direction:column;
+  overflow:hidden;
 }
 html[data-details-flow='true'] #info .info-text #gTitle {
   flex:none;
@@ -738,7 +713,9 @@ html[data-details-flow='true'] #info #gDesc {
 }
 html[data-details-flow='true'] #info .actions {
   flex:none;
-  flex-wrap:wrap;
+  flex-wrap:nowrap;
   margin-top:auto;
+  overflow-x:auto;
+  scrollbar-width:thin;
 }
 html[data-details-flow='true'] #info .actions button { flex:none; white-space:nowrap; }
